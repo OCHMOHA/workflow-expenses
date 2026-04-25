@@ -230,6 +230,7 @@ export default function AdministrationPage() {
   const [taxonomySousLigneDraft, setTaxonomySousLigneDraft] = React.useState('');
   const [taxonomyEditorKey, setTaxonomyEditorKey] = React.useState<'ligne' | 'categorie' | 'sous_ligne'>('ligne');
   const [taxonomySelectedValue, setTaxonomySelectedValue] = React.useState('');
+  const [taxonomyLigneCategorieParent, setTaxonomyLigneCategorieParent] = React.useState('');
   const [systemFieldPickerLabel, setSystemFieldPickerLabel] = React.useState<string>('');
   const [adminTab, setAdminTab] = React.useState<'USERS' | 'DEPENSES' | 'TICKETS' | 'TAXONOMY'>('TAXONOMY');
 
@@ -308,10 +309,19 @@ export default function AdministrationPage() {
     return v2.length > 0 ? v2 : depensesCategorieOptions;
   }, [depensesCategorieOptions, fieldBySystemKeyV2]);
 
+  const ligneMapV2 = React.useMemo(() => {
+    const v2 = optionsSousLigneMap(fieldBySystemKeyV2.get('ligne')?.options);
+    return Object.keys(v2).length > 0 ? v2 : {};
+  }, [fieldBySystemKeyV2]);
+
   const ligneOptionsV2 = React.useMemo(() => {
+    // Flatten all lignes across all categories
+    const fromMap = Object.values(ligneMapV2).flat();
+    if (fromMap.length > 0) return Array.from(new Set(fromMap)).sort((a, b) => a.localeCompare(b));
+    // Fallback to flat array format (backward compat)
     const v2 = optionsArray(fieldBySystemKeyV2.get('ligne')?.options);
     return v2.length > 0 ? v2 : depensesLigneOptions;
-  }, [depensesLigneOptions, fieldBySystemKeyV2]);
+  }, [ligneMapV2, fieldBySystemKeyV2, depensesLigneOptions]);
 
   const sousLigneMapV2 = React.useMemo(() => {
     const v2 = optionsSousLigneMap(fieldBySystemKeyV2.get('sous_ligne')?.options);
@@ -1158,12 +1168,13 @@ export default function AdministrationPage() {
                 onChange={(e) => {
                   setTaxonomyEditorKey(e.target.value as 'ligne' | 'categorie' | 'sous_ligne');
                   setTaxonomySelectedValue('');
+                  setTaxonomyLigneCategorieParent('');
                 }}
                 size="small"
                 fullWidth
               >
-                <MenuItem value="ligne">Ligne</MenuItem>
                 <MenuItem value="categorie">Catégorie</MenuItem>
+                <MenuItem value="ligne">Ligne</MenuItem>
                 <MenuItem value="sous_ligne">Sous-ligne</MenuItem>
               </TextField>
 
@@ -1186,6 +1197,25 @@ export default function AdministrationPage() {
                     </MenuItem>
                   ))}
                 </TextField>
+              ) : taxonomyEditorKey === 'ligne' ? (
+                <TextField
+                  select
+                  label="Catégorie"
+                  value={taxonomyLigneCategorieParent}
+                  onChange={(e) => {
+                    setTaxonomyLigneCategorieParent(e.target.value);
+                    setTaxonomySelectedValue('');
+                  }}
+                  size="small"
+                  fullWidth
+                >
+                  <MenuItem value="">Sélectionner</MenuItem>
+                  {categorieOptionsV2.map((c) => (
+                    <MenuItem key={c} value={c}>
+                      {prettyText(c)}
+                    </MenuItem>
+                  ))}
+                </TextField>
               ) : (
                 <Box />
               )}
@@ -1202,7 +1232,7 @@ export default function AdministrationPage() {
               >
                 <MenuItem value="">Sélectionner</MenuItem>
                 {taxonomyEditorKey === 'ligne'
-                  ? ligneOptionsV2.map((o) => (
+                  ? (taxonomyLigneCategorieParent ? ligneMapV2[taxonomyLigneCategorieParent] ?? [] : []).map((o) => (
                       <MenuItem key={o} value={o}>
                         {prettyText(o)}
                       </MenuItem>
@@ -1244,17 +1274,21 @@ export default function AdministrationPage() {
                   }}
                   size="small"
                   fullWidth
-                  disabled={taxonomyEditorKey === 'sous_ligne' && !taxonomySousLigneLigne}
+                  disabled={(taxonomyEditorKey === 'sous_ligne' && !taxonomySousLigneLigne) || (taxonomyEditorKey === 'ligne' && !taxonomyLigneCategorieParent)}
                 />
                 <Button
                   variant="contained"
-                  disabled={taxonomyEditorKey === 'sous_ligne' && !taxonomySousLigneLigne}
+                  disabled={(taxonomyEditorKey === 'sous_ligne' && !taxonomySousLigneLigne) || (taxonomyEditorKey === 'ligne' && !taxonomyLigneCategorieParent)}
                   onClick={() => {
                     if (taxonomyEditorKey === 'ligne') {
                       const next = taxonomyLigneDraft.trim();
                       if (!next) return;
-                      const clean = Array.from(new Set([...ligneOptionsV2, next]));
-                      void saveSystemOptionsV2('ligne', clean);
+                      if (!taxonomyLigneCategorieParent) return;
+                      const safeMap = optionsSousLigneMap(fieldBySystemKeyV2.get('ligne')?.options);
+                      const current = safeMap[taxonomyLigneCategorieParent] ?? [];
+                      const updated = Array.from(new Set([...current, next]));
+                      const nextMap = { ...safeMap, [taxonomyLigneCategorieParent]: updated };
+                      void saveSystemOptionsV2('ligne', nextMap);
                       setTaxonomyLigneDraft('');
                       return;
                     }
@@ -1287,8 +1321,12 @@ export default function AdministrationPage() {
                   onClick={() => {
                     if (!taxonomySelectedValue) return;
                     if (taxonomyEditorKey === 'ligne') {
-                      const clean = ligneOptionsV2.filter((x) => x !== taxonomySelectedValue);
-                      void saveSystemOptionsV2('ligne', clean);
+                      if (!taxonomyLigneCategorieParent) return;
+                      const safeMap = optionsSousLigneMap(fieldBySystemKeyV2.get('ligne')?.options);
+                      const current = safeMap[taxonomyLigneCategorieParent] ?? [];
+                      const updated = current.filter((x) => x !== taxonomySelectedValue);
+                      const nextMap = { ...safeMap, [taxonomyLigneCategorieParent]: updated };
+                      void saveSystemOptionsV2('ligne', nextMap);
                       setTaxonomySelectedValue('');
                       setTaxonomySousLigneLigne((p) => (p === taxonomySelectedValue ? '' : p));
                       return;

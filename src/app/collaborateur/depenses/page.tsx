@@ -782,6 +782,7 @@ export default function CollaborateurDepensesPage() {
   const montantTva = watch('montantTva');
   const montantTtc = watch('montantTtc');
   const libelle = watch('libelle') ?? '';
+  const categorieValue = watch('categorie');
   const ligneValue = watch('ligne');
   const matriculeValue = watch('matricule') ?? '';
   const nomSaisisseurValue = watch('nomSaisisseur') ?? '';
@@ -1076,9 +1077,15 @@ export default function CollaborateurDepensesPage() {
 
   const ligneOptions = React.useMemo(() => {
     const f = v2FieldBySystemKey.get('ligne');
+    // Try map format first (categorie -> lignes)
+    const v2Map = optionsSousLigneMap(f?.options);
+    if (Object.keys(v2Map).length > 0) {
+      return v2Map[categorieValue] ?? [];
+    }
+    // Fallback to flat array format (backward compat)
     const v2 = optionsArray(f?.options);
     return v2.length > 0 ? v2 : depensesLigneOptions;
-  }, [depensesLigneOptions, v2FieldBySystemKey]);
+  }, [depensesLigneOptions, v2FieldBySystemKey, categorieValue]);
 
   const sousLigneMap = React.useMemo(() => {
     const f = v2FieldBySystemKey.get('sous_ligne');
@@ -1094,6 +1101,16 @@ export default function CollaborateurDepensesPage() {
     if (fromV2.length > 0) return fromV2;
     return depensesSousLigneMap[ligneValue] ?? [];
   }, [depensesSousLigneMap, selectedLigne, sousLigneMap]);
+
+  // Reset ligne and sous-ligne when categorie changes
+  const prevCategorieRef = React.useRef(categorieValue);
+  React.useEffect(() => {
+    if (prevCategorieRef.current !== categorieValue) {
+      prevCategorieRef.current = categorieValue;
+      setValue('ligne', '', { shouldValidate: false });
+      setValue('sousLigne', '', { shouldValidate: false });
+    }
+  }, [categorieValue, setValue]);
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
