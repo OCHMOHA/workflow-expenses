@@ -240,6 +240,7 @@ export default function AdministrationPage() {
     return m;
   }, [profiles]);
 
+
   const fieldBySystemKeyV2 = React.useMemo(() => {
     const m = new Map<string, FormFieldV2Row>();
     for (const f of fieldsV2) {
@@ -250,6 +251,25 @@ export default function AdministrationPage() {
     }
     return m;
   }, [fieldsV2]);
+
+  const responsableProfiles = React.useMemo(() => {
+    return profiles.filter((p) => {
+      const r = (p.role ?? '').toString().trim().toLowerCase();
+      return r === 'responsable' || r === 'responsable niveau 2';
+    });
+  }, [profiles]);
+
+  const sousLigneValideurMap = React.useMemo((): Record<string, string> => {
+    const opts = fieldBySystemKeyV2.get('sous_ligne')?.options;
+    if (!opts || typeof opts !== 'object' || Array.isArray(opts)) return {};
+    const raw = (opts as Record<string, unknown>)._valideur_map;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === 'string' && v.trim()) out[k] = v;
+    }
+    return out;
+  }, [fieldBySystemKeyV2]);
 
   const customFieldsInFormV2 = React.useMemo(() => {
     return fieldsV2
@@ -309,19 +329,24 @@ export default function AdministrationPage() {
     return v2.length > 0 ? v2 : depensesCategorieOptions;
   }, [depensesCategorieOptions, fieldBySystemKeyV2]);
 
+  const ligneRawOptions = React.useMemo(() => fieldBySystemKeyV2.get('ligne')?.options, [fieldBySystemKeyV2]);
+
+  const ligneIsFlatArray = React.useMemo(() => Array.isArray(ligneRawOptions), [ligneRawOptions]);
+
   const ligneMapV2 = React.useMemo(() => {
-    const v2 = optionsSousLigneMap(fieldBySystemKeyV2.get('ligne')?.options);
+    const v2 = optionsSousLigneMap(ligneRawOptions);
     return Object.keys(v2).length > 0 ? v2 : {};
-  }, [fieldBySystemKeyV2]);
+  }, [ligneRawOptions]);
+
+  const ligneFlatArray = React.useMemo(() => optionsArray(ligneRawOptions), [ligneRawOptions]);
 
   const ligneOptionsV2 = React.useMemo(() => {
     // Flatten all lignes across all categories
     const fromMap = Object.values(ligneMapV2).flat();
     if (fromMap.length > 0) return Array.from(new Set(fromMap)).sort((a, b) => a.localeCompare(b));
     // Fallback to flat array format (backward compat)
-    const v2 = optionsArray(fieldBySystemKeyV2.get('ligne')?.options);
-    return v2.length > 0 ? v2 : depensesLigneOptions;
-  }, [ligneMapV2, fieldBySystemKeyV2, depensesLigneOptions]);
+    return ligneFlatArray.length > 0 ? ligneFlatArray : depensesLigneOptions;
+  }, [ligneMapV2, ligneFlatArray, depensesLigneOptions]);
 
   const sousLigneMapV2 = React.useMemo(() => {
     const v2 = optionsSousLigneMap(fieldBySystemKeyV2.get('sous_ligne')?.options);
@@ -713,8 +738,8 @@ export default function AdministrationPage() {
       const rawMsg = e instanceof Error ? e.message : String(e);
       throw new Error(
         `Impossible d'appeler la fonction Edge "${name}". (${rawMsg})\n` +
-          `Vérifiez que Supabase Edge Functions est déployé et accessible.\n` +
-          `URL utilisée: ${baseUrl}/functions/v1/${name}`
+        `Vérifiez que Supabase Edge Functions est déployé et accessible.\n` +
+        `URL utilisée: ${baseUrl}/functions/v1/${name}`
       );
     }
 
@@ -894,28 +919,122 @@ export default function AdministrationPage() {
             </Box>
           </Box>
 
-        <Paper variant="outlined" sx={{ mb: 2 }}>
-          <Tabs
-            value={adminTab}
-            onChange={(_, v) => setAdminTab(v)}
-            variant="scrollable"
-            scrollButtons="auto"
-          >
-            <Tab value="USERS" label="Utilisateurs" />
-            <Tab value="DEPENSES" label="Dépenses" />
-            <Tab value="TICKETS" label="Tickets de règlement" />
-            <Tab value="TAXONOMY" label="Listes Nouvelle saisie" />
-          </Tabs>
-        </Paper>
+          <Paper variant="outlined" sx={{ mb: 2 }}>
+            <Tabs
+              value={adminTab}
+              onChange={(_, v) => setAdminTab(v)}
+              variant="scrollable"
+              scrollButtons="auto"
+            >
+              <Tab value="USERS" label="Utilisateurs" />
+              <Tab value="DEPENSES" label="Dépenses" />
+              <Tab value="TICKETS" label="Tickets de règlement" />
+              <Tab value="TAXONOMY" label="Listes Nouvelle saisie" />
+            </Tabs>
+          </Paper>
 
-        {adminTab !== 'USERS' ? null : (
-          <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-            <Typography variant="h6" sx={{ mb: 2 }}>
-              Utilisateurs
-            </Typography>
+          {adminTab !== 'USERS' ? null : (
+            <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Utilisateurs
+              </Typography>
 
-            <Box sx={{ width: '100%', overflowX: 'auto' }}>
-              <Table size="small" sx={{ minWidth: 900 }}>
+              <Box sx={{ width: '100%', overflowX: 'auto' }}>
+                <Table size="small" sx={{ minWidth: 900 }}>
+                  <TableHead>
+                    <TableRow
+                      sx={{
+                        '& th': {
+                          backgroundColor: '#217346',
+                          color: '#fff',
+                          fontWeight: 700,
+                        },
+                      }}
+                    >
+                      <TableCell>Matricule</TableCell>
+                      <TableCell>Nom complet</TableCell>
+                      <TableCell>Nom d'utilisateur</TableCell>
+                      <TableCell>Rôle</TableCell>
+                      <TableCell>Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {profiles.map((p) => (
+                      <TableRow key={p.id} hover>
+                        <TableCell>{p.matricule ?? '-'}</TableCell>
+                        <TableCell>{p.nom_complet ?? '-'}</TableCell>
+                        <TableCell>{p.username ?? '-'}</TableCell>
+                        <TableCell>
+                          <TextField
+                            select
+                            size="small"
+                            value={toRoleValue(p.role)}
+                            onChange={(e) => updateRole(p.id, e.target.value as RoleValue)}
+                            sx={{ minWidth: 190 }}
+                          >
+                            {roles.map((r) => (
+                              <MenuItem key={r} value={r}>
+                                {r === 'COLLABORATEUR'
+                                  ? 'Collaborateur'
+                                  : r === 'RESPONSABLE'
+                                    ? 'Responsable'
+                                    : r === 'RESPONSABLE_N2'
+                                      ? 'Responsable niveau 2'
+                                      : 'Administrateur'}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="small"
+                            color="error"
+                            variant="outlined"
+                            disabled={p.id === me?.id || deletingUser}
+                            onClick={() => setDeleteUserId(p.id)}
+                          >
+                            Supprimer
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+
+                    {customFieldsInFormV2.map((f) => (
+                      <TableRow key={f.id} hover>
+                        <TableCell sx={{ minWidth: 240 }}>{f.label}</TableCell>
+                        <TableCell>
+                          <Switch
+                            checked={!!f.enabled}
+                            onChange={(_, checked) => {
+                              void updateFieldV2(f.id, { enabled: checked });
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          <Button
+                            size="small"
+                            color="error"
+                            variant="outlined"
+                            onClick={() => void deleteFieldV2(f)}
+                          >
+                            Supprimer
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Box>
+            </Paper>
+          )}
+
+          {adminTab !== 'TICKETS' ? null : (
+            <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Tickets de règlement
+              </Typography>
+
+              <Table size="small">
                 <TableHead>
                   <TableRow
                     sx={{
@@ -926,47 +1045,36 @@ export default function AdministrationPage() {
                       },
                     }}
                   >
-                    <TableCell>Matricule</TableCell>
-                    <TableCell>Nom complet</TableCell>
-                    <TableCell>Nom d'utilisateur</TableCell>
-                    <TableCell>Rôle</TableCell>
+                    <TableCell>ID</TableCell>
+                    <TableCell>Date</TableCell>
+                    <TableCell>Saisisseur</TableCell>
+                    <TableCell>Mode</TableCell>
+                    <TableCell>Bénéficiaire</TableCell>
+                    <TableCell>Réglée</TableCell>
                     <TableCell>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {profiles.map((p) => (
-                    <TableRow key={p.id} hover>
-                      <TableCell>{p.matricule ?? '-'}</TableCell>
-                      <TableCell>{p.nom_complet ?? '-'}</TableCell>
-                      <TableCell>{p.username ?? '-'}</TableCell>
+                  {ticketsReglement.map((t) => (
+                    <TableRow key={t.id} hover>
+                      <TableCell sx={{ fontFamily: 'monospace' }}>{t.id}</TableCell>
+                      <TableCell>{t.date_depense}</TableCell>
                       <TableCell>
-                        <TextField
-                          select
-                          size="small"
-                          value={toRoleValue(p.role)}
-                          onChange={(e) => updateRole(p.id, e.target.value as RoleValue)}
-                          sx={{ minWidth: 190 }}
-                        >
-                          {roles.map((r) => (
-                            <MenuItem key={r} value={r}>
-                              {r === 'COLLABORATEUR'
-                                ? 'Collaborateur'
-                                : r === 'RESPONSABLE'
-                                  ? 'Responsable'
-                                  : r === 'RESPONSABLE_N2'
-                                    ? 'Responsable niveau 2'
-                                  : 'Administrateur'}
-                            </MenuItem>
-                          ))}
-                        </TextField>
+                        {(() => {
+                          const p = profilesById.get(t.saisisseur_id);
+                          return p?.nom_complet || p?.matricule || t.saisisseur_id;
+                        })()}
                       </TableCell>
+                      <TableCell>{t.mode_reglement ?? '-'}</TableCell>
+                      <TableCell>{t.nom_beneficiaire_reglement ?? '-'}</TableCell>
+                      <TableCell>{t.reglee_at ? 'Oui' : 'Non'}</TableCell>
                       <TableCell>
                         <Button
                           size="small"
                           color="error"
                           variant="outlined"
-                          disabled={p.id === me?.id || deletingUser}
-                          onClick={() => setDeleteUserId(p.id)}
+                          disabled={deletingTicket}
+                          onClick={() => setDeleteTicketId(t.id)}
                         >
                           Supprimer
                         </Button>
@@ -974,413 +1082,481 @@ export default function AdministrationPage() {
                     </TableRow>
                   ))}
 
-                  {customFieldsInFormV2.map((f) => (
-                    <TableRow key={f.id} hover>
-                      <TableCell sx={{ minWidth: 240 }}>{f.label}</TableCell>
-                      <TableCell>
-                        <Switch
-                          checked={!!f.enabled}
-                          onChange={(_, checked) => {
-                            void updateFieldV2(f.id, { enabled: checked });
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                        <Button
-                          size="small"
-                          color="error"
-                          variant="outlined"
-                          onClick={() => void deleteFieldV2(f)}
-                        >
-                          Supprimer
-                        </Button>
+                  {ticketsReglement.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7}>
+                        <Typography>Aucun ticket.</Typography>
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : null}
                 </TableBody>
               </Table>
-            </Box>
-          </Paper>
-        )}
+            </Paper>
+          )}
 
-        {adminTab !== 'TICKETS' ? null : (
-          <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-            <Typography variant="h6" sx={{ mb: 2 }}>
-              Tickets de règlement
-            </Typography>
-
-            <Table size="small">
-              <TableHead>
-                <TableRow
-                  sx={{
-                    '& th': {
-                      backgroundColor: '#217346',
-                      color: '#fff',
-                      fontWeight: 700,
-                    },
-                  }}
-                >
-                  <TableCell>ID</TableCell>
-                  <TableCell>Date</TableCell>
-                  <TableCell>Saisisseur</TableCell>
-                  <TableCell>Mode</TableCell>
-                  <TableCell>Bénéficiaire</TableCell>
-                  <TableCell>Réglée</TableCell>
-                  <TableCell>Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {ticketsReglement.map((t) => (
-                  <TableRow key={t.id} hover>
-                    <TableCell sx={{ fontFamily: 'monospace' }}>{t.id}</TableCell>
-                    <TableCell>{t.date_depense}</TableCell>
-                    <TableCell>
-                      {(() => {
-                        const p = profilesById.get(t.saisisseur_id);
-                        return p?.nom_complet || p?.matricule || t.saisisseur_id;
-                      })()}
-                    </TableCell>
-                    <TableCell>{t.mode_reglement ?? '-'}</TableCell>
-                    <TableCell>{t.nom_beneficiaire_reglement ?? '-'}</TableCell>
-                    <TableCell>{t.reglee_at ? 'Oui' : 'Non'}</TableCell>
-                    <TableCell>
-                      <Button
-                        size="small"
-                        color="error"
-                        variant="outlined"
-                        disabled={deletingTicket}
-                        onClick={() => setDeleteTicketId(t.id)}
-                      >
-                        Supprimer
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-
-                {ticketsReglement.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7}>
-                      <Typography>Aucun ticket.</Typography>
-                    </TableCell>
-                  </TableRow>
-                ) : null}
-              </TableBody>
-            </Table>
-          </Paper>
-        )}
-
-        <Dialog open={!!deleteUserId} onClose={() => setDeleteUserId(null)} maxWidth="xs" fullWidth>
-          <DialogTitle>Supprimer l’utilisateur</DialogTitle>
-          <DialogContent>
-            <Typography>
-              Voulez-vous vraiment supprimer cet utilisateur ?
-            </Typography>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setDeleteUserId(null)} disabled={deletingUser}>
-              Annuler
-            </Button>
-            <Button
-              color="error"
-              variant="contained"
-              disabled={!deleteUserId || deletingUser}
-              onClick={async () => {
-                const id = deleteUserId;
-                setDeleteUserId(null);
-                if (id) await deleteUser(id);
-              }}
-            >
-              Supprimer
-            </Button>
-          </DialogActions>
-        </Dialog>
-
-        <Dialog open={!!deleteTicketId} onClose={() => setDeleteTicketId(null)} fullWidth maxWidth="xs">
-          <DialogTitle>Supprimer le ticket</DialogTitle>
-          <DialogContent dividers>
-            <Typography>
-              Cette action supprimera définitivement le ticket (ligne depenses) et tentera de supprimer la pièce dans le stockage.
-            </Typography>
-          </DialogContent>
-          <DialogActions>
-            <Button disabled={deletingTicket} onClick={() => setDeleteTicketId(null)}>
-              Annuler
-            </Button>
-            <Button
-              color="error"
-              variant="contained"
-              disabled={deletingTicket}
-              onClick={async () => {
-                if (!deleteTicketId) return;
-                setDeletingTicket(true);
-                setError(null);
-                setSuccess(null);
-
-                const ticketId = deleteTicketId;
-                const row = ticketsReglement.find((x) => x.id === ticketId) ?? null;
-
-                try {
-                  const { data: deletedRows, error: de } = await supabase
-                    .from('depenses')
-                    .delete()
-                    .eq('id', ticketId)
-                    .select('id');
-                  if (de) throw de;
-                  if (!deletedRows || deletedRows.length === 0) {
-                    throw new Error('Delete was not applied (RLS or permissions).');
-                  }
-
-                  const raw = (row?.piece_reglement_url ?? '').toString().trim();
-                  if (raw) {
-                    const storagePath = raw
-                      .replace(/^\/+/, '')
-                      .replace(/^pieces-reglement\//i, '')
-                      .replace(/^public\//i, '');
-                    await supabase.storage.from('pieces-reglement').remove([storagePath]);
-                  }
-
-                  setDepenses((prev) => prev.filter((x) => x.id !== ticketId));
-                  setSuccess('Ticket supprimé.');
-                  setDeleteTicketId(null);
-                } catch (e: unknown) {
-                  setError(e instanceof Error ? e.message : String(e));
-                } finally {
-                  setDeletingTicket(false);
-                }
-              }}
-            >
-              Supprimer
-            </Button>
-          </DialogActions>
-        </Dialog>
-
-        {adminTab !== 'TAXONOMY' ? null : (
-          <Paper sx={{ p: 2, mb: 2 }}>
-            <Typography variant="h6" sx={{ mb: 1 }}>
-              Listes Nouvelle saisie
-            </Typography>
-
-            <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
-              <TextField
-                select
-                label="Champ"
-                value={taxonomyEditorKey}
-                onChange={(e) => {
-                  setTaxonomyEditorKey(e.target.value as 'ligne' | 'categorie' | 'sous_ligne');
-                  setTaxonomySelectedValue('');
-                  setTaxonomyLigneCategorieParent('');
+          <Dialog open={!!deleteUserId} onClose={() => setDeleteUserId(null)} maxWidth="xs" fullWidth>
+            <DialogTitle>Supprimer l’utilisateur</DialogTitle>
+            <DialogContent>
+              <Typography>
+                Voulez-vous vraiment supprimer cet utilisateur ?
+              </Typography>
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setDeleteUserId(null)} disabled={deletingUser}>
+                Annuler
+              </Button>
+              <Button
+                color="error"
+                variant="contained"
+                disabled={!deleteUserId || deletingUser}
+                onClick={async () => {
+                  const id = deleteUserId;
+                  setDeleteUserId(null);
+                  if (id) await deleteUser(id);
                 }}
-                size="small"
-                fullWidth
               >
-                <MenuItem value="categorie">Catégorie</MenuItem>
-                <MenuItem value="ligne">Ligne</MenuItem>
-                <MenuItem value="sous_ligne">Sous-ligne</MenuItem>
-              </TextField>
+                Supprimer
+              </Button>
+            </DialogActions>
+          </Dialog>
 
-              {taxonomyEditorKey === 'sous_ligne' ? (
+          <Dialog open={!!deleteTicketId} onClose={() => setDeleteTicketId(null)} fullWidth maxWidth="xs">
+            <DialogTitle>Supprimer le ticket</DialogTitle>
+            <DialogContent dividers>
+              <Typography>
+                Cette action supprimera définitivement le ticket (ligne depenses) et tentera de supprimer la pièce dans le stockage.
+              </Typography>
+            </DialogContent>
+            <DialogActions>
+              <Button disabled={deletingTicket} onClick={() => setDeleteTicketId(null)}>
+                Annuler
+              </Button>
+              <Button
+                color="error"
+                variant="contained"
+                disabled={deletingTicket}
+                onClick={async () => {
+                  if (!deleteTicketId) return;
+                  setDeletingTicket(true);
+                  setError(null);
+                  setSuccess(null);
+
+                  const ticketId = deleteTicketId;
+                  const row = ticketsReglement.find((x) => x.id === ticketId) ?? null;
+
+                  try {
+                    const { data: deletedRows, error: de } = await supabase
+                      .from('depenses')
+                      .delete()
+                      .eq('id', ticketId)
+                      .select('id');
+                    if (de) throw de;
+                    if (!deletedRows || deletedRows.length === 0) {
+                      throw new Error('Delete was not applied (RLS or permissions).');
+                    }
+
+                    const raw = (row?.piece_reglement_url ?? '').toString().trim();
+                    if (raw) {
+                      const storagePath = raw
+                        .replace(/^\/+/, '')
+                        .replace(/^pieces-reglement\//i, '')
+                        .replace(/^public\//i, '');
+                      await supabase.storage.from('pieces-reglement').remove([storagePath]);
+                    }
+
+                    setDepenses((prev) => prev.filter((x) => x.id !== ticketId));
+                    setSuccess('Ticket supprimé.');
+                    setDeleteTicketId(null);
+                  } catch (e: unknown) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setDeletingTicket(false);
+                  }
+                }}
+              >
+                Supprimer
+              </Button>
+            </DialogActions>
+          </Dialog>
+
+          {adminTab !== 'TAXONOMY' ? null : (
+            <Paper sx={{ p: 2, mb: 2 }}>
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                Listes Nouvelle saisie
+              </Typography>
+
+              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
                 <TextField
                   select
-                  label="Ligne"
-                  value={taxonomySousLigneLigne}
+                  label="Champ"
+                  value={taxonomyEditorKey}
                   onChange={(e) => {
-                    setTaxonomySousLigneLigne(e.target.value);
+                    setTaxonomyEditorKey(e.target.value as 'ligne' | 'categorie' | 'sous_ligne');
                     setTaxonomySelectedValue('');
+                    setTaxonomyLigneCategorieParent('');
                   }}
                   size="small"
                   fullWidth
                 >
-                  <MenuItem value="">Sélectionner</MenuItem>
-                  {ligneOptionsV2.map((l) => (
-                    <MenuItem key={l} value={l}>
-                      {prettyText(l)}
-                    </MenuItem>
-                  ))}
+                  <MenuItem value="categorie">Catégorie</MenuItem>
+                  <MenuItem value="ligne">Ligne</MenuItem>
+                  <MenuItem value="sous_ligne">Sous-ligne</MenuItem>
                 </TextField>
-              ) : taxonomyEditorKey === 'ligne' ? (
+
+                {taxonomyEditorKey === 'sous_ligne' ? (
+                  <TextField
+                    select
+                    label="Ligne"
+                    value={taxonomySousLigneLigne}
+                    onChange={(e) => {
+                      setTaxonomySousLigneLigne(e.target.value);
+                      setTaxonomySelectedValue('');
+                    }}
+                    size="small"
+                    fullWidth
+                  >
+                    <MenuItem value="">Sélectionner</MenuItem>
+                    {ligneOptionsV2.map((l) => (
+                      <MenuItem key={l} value={l}>
+                        {prettyText(l)}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                ) : taxonomyEditorKey === 'ligne' ? (
+                  ligneIsFlatArray ? (
+                    <Box />
+                  ) : (
+                    <TextField
+                      select
+                      label="Catégorie"
+                      value={taxonomyLigneCategorieParent}
+                      onChange={(e) => {
+                        setTaxonomyLigneCategorieParent(e.target.value);
+                        setTaxonomySelectedValue('');
+                      }}
+                      size="small"
+                      fullWidth
+                    >
+                      <MenuItem value="">Sélectionner</MenuItem>
+                      {categorieOptionsV2.map((c) => (
+                        <MenuItem key={c} value={c}>
+                          {prettyText(c)}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  )
+                ) : (
+                  <Box />
+                )}
+              </Box>
+
+              <Box sx={{ mt: 2, display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
                 <TextField
                   select
-                  label="Catégorie"
-                  value={taxonomyLigneCategorieParent}
-                  onChange={(e) => {
-                    setTaxonomyLigneCategorieParent(e.target.value);
-                    setTaxonomySelectedValue('');
-                  }}
+                  label="Valeurs"
                   size="small"
                   fullWidth
+                  value={taxonomySelectedValue}
+                  onChange={(e) => setTaxonomySelectedValue(e.target.value)}
                 >
                   <MenuItem value="">Sélectionner</MenuItem>
-                  {categorieOptionsV2.map((c) => (
-                    <MenuItem key={c} value={c}>
-                      {prettyText(c)}
-                    </MenuItem>
-                  ))}
-                </TextField>
-              ) : (
-                <Box />
-              )}
-            </Box>
-
-            <Box sx={{ mt: 2, display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
-              <TextField
-                select
-                label="Valeurs"
-                size="small"
-                fullWidth
-                value={taxonomySelectedValue}
-                onChange={(e) => setTaxonomySelectedValue(e.target.value)}
-              >
-                <MenuItem value="">Sélectionner</MenuItem>
-                {taxonomyEditorKey === 'ligne'
-                  ? (taxonomyLigneCategorieParent ? ligneMapV2[taxonomyLigneCategorieParent] ?? [] : []).map((o) => (
+                  {taxonomyEditorKey === 'ligne'
+                    ? (ligneIsFlatArray
+                        ? ligneFlatArray
+                        : taxonomyLigneCategorieParent
+                          ? (ligneMapV2[taxonomyLigneCategorieParent] ?? [])
+                          : ligneOptionsV2
+                      ).map((o) => (
                       <MenuItem key={o} value={o}>
                         {prettyText(o)}
                       </MenuItem>
                     ))
-                  : taxonomyEditorKey === 'categorie'
-                    ? categorieOptionsV2.map((o) => (
+                    : taxonomyEditorKey === 'categorie'
+                      ? categorieOptionsV2.map((o) => (
                         <MenuItem key={o} value={o}>
                           {prettyText(o)}
                         </MenuItem>
                       ))
-                    : (taxonomySousLigneLigne ? sousLigneMapV2[taxonomySousLigneLigne] ?? [] : []).map((o) => (
+                      : (taxonomySousLigneLigne ? sousLigneMapV2[taxonomySousLigneLigne] ?? [] : []).map((o) => (
                         <MenuItem key={o} value={o}>
                           {prettyText(o)}
                         </MenuItem>
                       ))}
-              </TextField>
+                </TextField>
 
-              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <TextField
+                    label={
+                      taxonomyEditorKey === 'ligne'
+                        ? 'Ajouter une ligne'
+                        : taxonomyEditorKey === 'categorie'
+                          ? 'Ajouter une catégorie'
+                          : 'Ajouter une sous-ligne'
+                    }
+                    value={
+                      taxonomyEditorKey === 'ligne'
+                        ? taxonomyLigneDraft
+                        : taxonomyEditorKey === 'categorie'
+                          ? taxonomyCategorieDraft
+                          : taxonomySousLigneDraft
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (taxonomyEditorKey === 'ligne') setTaxonomyLigneDraft(v);
+                      else if (taxonomyEditorKey === 'categorie') setTaxonomyCategorieDraft(v);
+                      else setTaxonomySousLigneDraft(v);
+                    }}
+                    size="small"
+                    fullWidth
+                    disabled={(taxonomyEditorKey === 'sous_ligne' && !taxonomySousLigneLigne) || (taxonomyEditorKey === 'ligne' && !ligneIsFlatArray && !taxonomyLigneCategorieParent)}
+                  />
+                  <Button
+                    variant="contained"
+                    disabled={(taxonomyEditorKey === 'sous_ligne' && !taxonomySousLigneLigne) || (taxonomyEditorKey === 'ligne' && !ligneIsFlatArray && !taxonomyLigneCategorieParent)}
+                    onClick={() => {
+                      if (taxonomyEditorKey === 'ligne') {
+                        const next = taxonomyLigneDraft.trim();
+                        if (!next) return;
+                        if (ligneIsFlatArray) {
+                          // Flat array format: add directly
+                          const updated = Array.from(new Set([...ligneFlatArray, next]));
+                          void saveSystemOptionsV2('ligne', updated);
+                          setTaxonomyLigneDraft('');
+                          return;
+                        }
+                        if (!taxonomyLigneCategorieParent) return;
+                        const safeMap = optionsSousLigneMap(fieldBySystemKeyV2.get('ligne')?.options);
+                        const current = safeMap[taxonomyLigneCategorieParent] ?? [];
+                        const updated = Array.from(new Set([...current, next]));
+                        const nextMap = { ...safeMap, [taxonomyLigneCategorieParent]: updated };
+                        void saveSystemOptionsV2('ligne', nextMap);
+                        setTaxonomyLigneDraft('');
+                        return;
+                      }
+                      if (taxonomyEditorKey === 'categorie') {
+                        const next = taxonomyCategorieDraft.trim();
+                        if (!next) return;
+                        const clean = Array.from(new Set([...categorieOptionsV2, next]));
+                        void saveSystemOptionsV2('categorie', clean);
+                        setTaxonomyCategorieDraft('');
+                        return;
+                      }
+
+                      const next = taxonomySousLigneDraft.trim();
+                      if (!next) return;
+                      if (!taxonomySousLigneLigne) return;
+                      const safeMap = optionsSousLigneMap(fieldBySystemKeyV2.get('sous_ligne')?.options);
+                      const current = safeMap[taxonomySousLigneLigne] ?? [];
+                      const updated = Array.from(new Set([...current, next]));
+                      const nextMap = { ...safeMap, [taxonomySousLigneLigne]: updated };
+                      void saveSystemOptionsV2('sous_ligne', nextMap);
+                      setTaxonomySousLigneDraft('');
+                    }}
+                  >
+                    Ajouter
+                  </Button>
+                  <Button
+                    color="error"
+                    variant="outlined"
+                    disabled={!taxonomySelectedValue}
+                    onClick={() => {
+                      if (!taxonomySelectedValue) return;
+                      if (taxonomyEditorKey === 'ligne') {
+                        if (ligneIsFlatArray) {
+                          // Flat array format: filter directly
+                          const updated = ligneFlatArray.filter((x) => x !== taxonomySelectedValue);
+                          void saveSystemOptionsV2('ligne', updated);
+                          setTaxonomySelectedValue('');
+                          setTaxonomySousLigneLigne((p) => (p === taxonomySelectedValue ? '' : p));
+                          return;
+                        }
+                        const safeMap = optionsSousLigneMap(fieldBySystemKeyV2.get('ligne')?.options);
+                        if (taxonomyLigneCategorieParent) {
+                          // Delete from specific category
+                          const current = safeMap[taxonomyLigneCategorieParent] ?? [];
+                          const updated = current.filter((x) => x !== taxonomySelectedValue);
+                          const nextMap = { ...safeMap, [taxonomyLigneCategorieParent]: updated };
+                          void saveSystemOptionsV2('ligne', nextMap);
+                        } else {
+                          // No category selected: remove from ALL categories
+                          const nextMap = { ...safeMap };
+                          for (const cat of Object.keys(nextMap)) {
+                            nextMap[cat] = nextMap[cat].filter((x) => x !== taxonomySelectedValue);
+                          }
+                          void saveSystemOptionsV2('ligne', nextMap);
+                        }
+                        setTaxonomySelectedValue('');
+                        setTaxonomySousLigneLigne((p) => (p === taxonomySelectedValue ? '' : p));
+                        return;
+                      }
+                      if (taxonomyEditorKey === 'categorie') {
+                        const clean = categorieOptionsV2.filter((x) => x !== taxonomySelectedValue);
+                        void saveSystemOptionsV2('categorie', clean);
+                        setTaxonomySelectedValue('');
+                        return;
+                      }
+                      if (!taxonomySousLigneLigne) return;
+                      const safeMap = optionsSousLigneMap(fieldBySystemKeyV2.get('sous_ligne')?.options);
+                      const current = safeMap[taxonomySousLigneLigne] ?? [];
+                      const updated = current.filter((x) => x !== taxonomySelectedValue);
+                      const nextMap = { ...safeMap, [taxonomySousLigneLigne]: updated };
+                      void saveSystemOptionsV2('sous_ligne', nextMap);
+                      setTaxonomySelectedValue('');
+                    }}
+                  >
+                    Supprimer
+                  </Button>
+                </Box>
+              </Box>
+
+              {taxonomyEditorKey === 'sous_ligne' && taxonomySelectedValue ? (
+                <Box sx={{ mt: 2, display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
+                  <TextField
+                    select
+                    label="Valideur assigné"
+                    size="small"
+                    fullWidth
+                    value={sousLigneValideurMap[taxonomySelectedValue] ?? ''}
+                    onChange={(e) => {
+                      const valideurId = e.target.value;
+                      const currentOpts = fieldBySystemKeyV2.get('sous_ligne')?.options;
+                      const safeOpts = (currentOpts && typeof currentOpts === 'object' && !Array.isArray(currentOpts))
+                        ? { ...(currentOpts as Record<string, unknown>) }
+                        : {};
+                      const currentMap = (typeof safeOpts._valideur_map === 'object' && safeOpts._valideur_map && !Array.isArray(safeOpts._valideur_map))
+                        ? { ...(safeOpts._valideur_map as Record<string, string>) }
+                        : {};
+                      if (valideurId) {
+                        currentMap[taxonomySelectedValue] = valideurId;
+                      } else {
+                        delete currentMap[taxonomySelectedValue];
+                      }
+                      const nextOpts = { ...safeOpts, _valideur_map: currentMap };
+                      void saveSystemOptionsV2('sous_ligne', nextOpts);
+                    }}
+                  >
+                    <MenuItem value="">Aucun (non assigné)</MenuItem>
+                    {responsableProfiles.map((p) => (
+                      <MenuItem key={p.id} value={p.id}>
+                        {p.nom_complet ?? p.matricule ?? p.id.slice(0, 8)}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <Typography variant="body2" sx={{ color: 'text.secondary', alignSelf: 'center' }}>
+                    {sousLigneValideurMap[taxonomySelectedValue]
+                      ? `Valideur : ${profilesById.get(sousLigneValideurMap[taxonomySelectedValue])?.nom_complet ?? sousLigneValideurMap[taxonomySelectedValue].slice(0, 8)}`
+                      : 'Aucun valideur assigné à cette sous-ligne'}
+                  </Typography>
+                </Box>
+              ) : null}
+
+              <Divider sx={{ my: 3 }} />
+
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                Champs Nouvelle saisie
+              </Typography>
+
+              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
                 <TextField
-                  label={
-                    taxonomyEditorKey === 'ligne'
-                      ? 'Ajouter une ligne'
-                      : taxonomyEditorKey === 'categorie'
-                        ? 'Ajouter une catégorie'
-                        : 'Ajouter une sous-ligne'
-                  }
-                  value={
-                    taxonomyEditorKey === 'ligne'
-                      ? taxonomyLigneDraft
-                      : taxonomyEditorKey === 'categorie'
-                        ? taxonomyCategorieDraft
-                        : taxonomySousLigneDraft
-                  }
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (taxonomyEditorKey === 'ligne') setTaxonomyLigneDraft(v);
-                    else if (taxonomyEditorKey === 'categorie') setTaxonomyCategorieDraft(v);
-                    else setTaxonomySousLigneDraft(v);
-                  }}
+                  label="Ajouter un champ"
+                  value={systemFieldPickerLabel}
+                  onChange={(e) => setSystemFieldPickerLabel(e.target.value)}
                   size="small"
                   fullWidth
-                  disabled={(taxonomyEditorKey === 'sous_ligne' && !taxonomySousLigneLigne) || (taxonomyEditorKey === 'ligne' && !taxonomyLigneCategorieParent)}
                 />
-                <Button
-                  variant="contained"
-                  disabled={(taxonomyEditorKey === 'sous_ligne' && !taxonomySousLigneLigne) || (taxonomyEditorKey === 'ligne' && !taxonomyLigneCategorieParent)}
-                  onClick={() => {
-                    if (taxonomyEditorKey === 'ligne') {
-                      const next = taxonomyLigneDraft.trim();
-                      if (!next) return;
-                      if (!taxonomyLigneCategorieParent) return;
-                      const safeMap = optionsSousLigneMap(fieldBySystemKeyV2.get('ligne')?.options);
-                      const current = safeMap[taxonomyLigneCategorieParent] ?? [];
-                      const updated = Array.from(new Set([...current, next]));
-                      const nextMap = { ...safeMap, [taxonomyLigneCategorieParent]: updated };
-                      void saveSystemOptionsV2('ligne', nextMap);
-                      setTaxonomyLigneDraft('');
-                      return;
-                    }
-                    if (taxonomyEditorKey === 'categorie') {
-                      const next = taxonomyCategorieDraft.trim();
-                      if (!next) return;
-                      const clean = Array.from(new Set([...categorieOptionsV2, next]));
-                      void saveSystemOptionsV2('categorie', clean);
-                      setTaxonomyCategorieDraft('');
-                      return;
-                    }
 
-                    const next = taxonomySousLigneDraft.trim();
-                    if (!next) return;
-                    if (!taxonomySousLigneLigne) return;
-                    const safeMap = optionsSousLigneMap(fieldBySystemKeyV2.get('sous_ligne')?.options);
-                    const current = safeMap[taxonomySousLigneLigne] ?? [];
-                    const updated = Array.from(new Set([...current, next]));
-                    const nextMap = { ...safeMap, [taxonomySousLigneLigne]: updated };
-                    void saveSystemOptionsV2('sous_ligne', nextMap);
-                    setTaxonomySousLigneDraft('');
-                  }}
-                >
-                  Ajouter
-                </Button>
-                <Button
-                  color="error"
-                  variant="outlined"
-                  disabled={!taxonomySelectedValue}
-                  onClick={() => {
-                    if (!taxonomySelectedValue) return;
-                    if (taxonomyEditorKey === 'ligne') {
-                      if (!taxonomyLigneCategorieParent) return;
-                      const safeMap = optionsSousLigneMap(fieldBySystemKeyV2.get('ligne')?.options);
-                      const current = safeMap[taxonomyLigneCategorieParent] ?? [];
-                      const updated = current.filter((x) => x !== taxonomySelectedValue);
-                      const nextMap = { ...safeMap, [taxonomyLigneCategorieParent]: updated };
-                      void saveSystemOptionsV2('ligne', nextMap);
-                      setTaxonomySelectedValue('');
-                      setTaxonomySousLigneLigne((p) => (p === taxonomySelectedValue ? '' : p));
-                      return;
-                    }
-                    if (taxonomyEditorKey === 'categorie') {
-                      const clean = categorieOptionsV2.filter((x) => x !== taxonomySelectedValue);
-                      void saveSystemOptionsV2('categorie', clean);
-                      setTaxonomySelectedValue('');
-                      return;
-                    }
-                    if (!taxonomySousLigneLigne) return;
-                    const safeMap = optionsSousLigneMap(fieldBySystemKeyV2.get('sous_ligne')?.options);
-                    const current = safeMap[taxonomySousLigneLigne] ?? [];
-                    const updated = current.filter((x) => x !== taxonomySelectedValue);
-                    const nextMap = { ...safeMap, [taxonomySousLigneLigne]: updated };
-                    void saveSystemOptionsV2('sous_ligne', nextMap);
-                    setTaxonomySelectedValue('');
-                  }}
-                >
-                  Supprimer
-                </Button>
+                <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
+                  <Button
+                    variant="contained"
+                    onClick={() => {
+                      void addCustomTextFieldToFormV2(systemFieldPickerLabel);
+                      setSystemFieldPickerLabel('');
+                    }}
+                  >
+                    Ajouter
+                  </Button>
+                </Box>
               </Box>
-            </Box>
 
-            <Divider sx={{ my: 3 }} />
+              <Box sx={{ mt: 2, width: '100%', overflowX: 'auto' }}>
+                <Table size="small" sx={{ minWidth: 720 }}>
+                  <TableHead>
+                    <TableRow
+                      sx={{
+                        '& th': {
+                          backgroundColor: '#217346',
+                          color: '#fff',
+                          fontWeight: 700,
+                        },
+                      }}
+                    >
+                      <TableCell>Champ</TableCell>
+                      <TableCell>Afficher</TableCell>
+                      <TableCell>Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {systemFieldsInFormV2.map((f) => (
+                      <TableRow key={f.id} hover>
+                        <TableCell sx={{ minWidth: 240 }}>{f.label}</TableCell>
+                        <TableCell>
+                          <Switch
+                            checked={!!f.enabled}
+                            onChange={(_, checked) => {
+                              void updateFieldV2(f.id, { enabled: checked });
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          <Button
+                            size="small"
+                            color="error"
+                            variant="outlined"
+                            disabled={!!f.is_mandatory}
+                            onClick={() => void deleteFieldV2(f)}
+                          >
+                            Supprimer
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
 
-            <Typography variant="h6" sx={{ mb: 1 }}>
-              Champs Nouvelle saisie
-            </Typography>
-
-            <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
-              <TextField
-                label="Ajouter un champ"
-                value={systemFieldPickerLabel}
-                onChange={(e) => setSystemFieldPickerLabel(e.target.value)}
-                size="small"
-                fullWidth
-              />
-
-              <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
-                <Button
-                  variant="contained"
-                  onClick={() => {
-                    void addCustomTextFieldToFormV2(systemFieldPickerLabel);
-                    setSystemFieldPickerLabel('');
-                  }}
-                >
-                  Ajouter
-                </Button>
+                    {customFieldsInFormV2.map((f) => (
+                      <TableRow key={f.id} hover>
+                        <TableCell sx={{ minWidth: 240 }}>{f.label}</TableCell>
+                        <TableCell>
+                          <Switch
+                            checked={!!f.enabled}
+                            onChange={(_, checked) => {
+                              void updateFieldV2(f.id, { enabled: checked });
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          <Button
+                            size="small"
+                            color="error"
+                            variant="outlined"
+                            disabled={!!f.is_mandatory}
+                            onClick={() => void deleteFieldV2(f)}
+                          >
+                            Supprimer
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </Box>
-            </Box>
+            </Paper>
+          )}
 
-            <Box sx={{ mt: 2, width: '100%', overflowX: 'auto' }}>
-              <Table size="small" sx={{ minWidth: 720 }}>
+          {adminTab !== 'DEPENSES' ? null : (
+            <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Dépenses
+              </Typography>
+              <Table size="small">
                 <TableHead>
                   <TableRow
                     sx={{
@@ -1391,55 +1567,35 @@ export default function AdministrationPage() {
                       },
                     }}
                   >
-                    <TableCell>Champ</TableCell>
-                    <TableCell>Afficher</TableCell>
+                    <TableCell>ID</TableCell>
+                    <TableCell>Date</TableCell>
+                    <TableCell>Catégorie</TableCell>
+                    <TableCell>Montant TTC</TableCell>
+                    <TableCell>Statut</TableCell>
+                    <TableCell>Saisisseur</TableCell>
                     <TableCell>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {systemFieldsInFormV2.map((f) => (
-                    <TableRow key={f.id} hover>
-                      <TableCell sx={{ minWidth: 240 }}>{f.label}</TableCell>
+                  {depenses.map((d) => (
+                    <TableRow key={d.id} hover>
+                      <TableCell sx={{ fontFamily: 'monospace' }}>{d.id}</TableCell>
+                      <TableCell>{d.date_depense}</TableCell>
+                      <TableCell>{d.categorie}</TableCell>
+                      <TableCell>{d.montant_ttc}</TableCell>
+                      <TableCell>{statutLabel(d.statut)}</TableCell>
                       <TableCell>
-                        <Switch
-                          checked={!!f.enabled}
-                          onChange={(_, checked) => {
-                            void updateFieldV2(f.id, { enabled: checked });
-                          }}
-                        />
+                        {(() => {
+                          const p = profilesById.get(d.saisisseur_id);
+                          return p?.nom_complet || p?.matricule || d.saisisseur_id;
+                        })()}
                       </TableCell>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      <TableCell>
                         <Button
                           size="small"
                           color="error"
                           variant="outlined"
-                          disabled={!!f.is_mandatory}
-                          onClick={() => void deleteFieldV2(f)}
-                        >
-                          Supprimer
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-
-                  {customFieldsInFormV2.map((f) => (
-                    <TableRow key={f.id} hover>
-                      <TableCell sx={{ minWidth: 240 }}>{f.label}</TableCell>
-                      <TableCell>
-                        <Switch
-                          checked={!!f.enabled}
-                          onChange={(_, checked) => {
-                            void updateFieldV2(f.id, { enabled: checked });
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                        <Button
-                          size="small"
-                          color="error"
-                          variant="outlined"
-                          disabled={!!f.is_mandatory}
-                          onClick={() => void deleteFieldV2(f)}
+                          onClick={() => setDeleteDepenseId(d.id)}
                         >
                           Supprimer
                         </Button>
@@ -1448,197 +1604,140 @@ export default function AdministrationPage() {
                   ))}
                 </TableBody>
               </Table>
-            </Box>
-          </Paper>
-        )}
+            </Paper>
+          )}
 
-        {adminTab !== 'DEPENSES' ? null : (
-          <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-            <Typography variant="h6" sx={{ mb: 2 }}>
-              Dépenses
-            </Typography>
-            <Table size="small">
-              <TableHead>
-                <TableRow
-                  sx={{
-                    '& th': {
-                      backgroundColor: '#217346',
-                      color: '#fff',
-                      fontWeight: 700,
-                    },
-                  }}
+          <Snackbar
+            open={!!error}
+            autoHideDuration={8000}
+            onClose={() => setError(null)}
+            anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+          >
+            <Alert severity="error" variant="filled" onClose={() => setError(null)}>
+              {error}
+            </Alert>
+          </Snackbar>
+
+          <Snackbar
+            open={!!success}
+            autoHideDuration={4000}
+            onClose={() => setSuccess(null)}
+            anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+          >
+            <Alert severity="success" variant="filled" onClose={() => setSuccess(null)}>
+              {success}
+            </Alert>
+          </Snackbar>
+
+          <Dialog open={createOpen} onClose={() => setCreateOpen(false)} fullWidth maxWidth="sm">
+            <DialogTitle>Créer un utilisateur</DialogTitle>
+            <DialogContent dividers>
+              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: '1fr', mt: 1 }}>
+                <TextField
+                  label="Nom d'utilisateur"
+                  value={createForm.username}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, username: e.target.value }))}
+                />
+                <TextField
+                  label="Mot de passe"
+                  type="password"
+                  value={createForm.password}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, password: e.target.value }))}
+                />
+                <TextField
+                  label="Matricule"
+                  value={createForm.matricule}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, matricule: e.target.value }))}
+                />
+                <TextField
+                  label="Nom complet"
+                  value={createForm.nom_complet}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, nom_complet: e.target.value }))}
+                />
+                <TextField
+                  select
+                  label="Rôle"
+                  value={createForm.role}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, role: e.target.value as CreateUserForm['role'] }))}
                 >
-                  <TableCell>ID</TableCell>
-                  <TableCell>Date</TableCell>
-                  <TableCell>Catégorie</TableCell>
-                  <TableCell>Montant TTC</TableCell>
-                  <TableCell>Statut</TableCell>
-                  <TableCell>Saisisseur</TableCell>
-                  <TableCell>Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {depenses.map((d) => (
-                  <TableRow key={d.id} hover>
-                    <TableCell sx={{ fontFamily: 'monospace' }}>{d.id}</TableCell>
-                    <TableCell>{d.date_depense}</TableCell>
-                    <TableCell>{d.categorie}</TableCell>
-                    <TableCell>{d.montant_ttc}</TableCell>
-                    <TableCell>{statutLabel(d.statut)}</TableCell>
-                    <TableCell>
-                      {(() => {
-                        const p = profilesById.get(d.saisisseur_id);
-                        return p?.nom_complet || p?.matricule || d.saisisseur_id;
-                      })()}
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        size="small"
-                        color="error"
-                        variant="outlined"
-                        onClick={() => setDeleteDepenseId(d.id)}
-                      >
-                        Supprimer
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Paper>
-        )}
+                  {roles.map((r) => (
+                    <MenuItem key={r} value={r}>
+                      {r === 'COLLABORATEUR'
+                        ? 'Collaborateur'
+                        : r === 'RESPONSABLE'
+                          ? 'Responsable'
+                          : r === 'RESPONSABLE_N2'
+                            ? 'Responsable niveau 2'
+                            : 'Administrateur'}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Box>
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setCreateOpen(false)}>Annuler</Button>
+              <Button variant="contained" onClick={() => void createUser()}>
+                Créer
+              </Button>
+            </DialogActions>
+          </Dialog>
 
-        <Snackbar
-          open={!!error}
-          autoHideDuration={8000}
-          onClose={() => setError(null)}
-          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        >
-          <Alert severity="error" variant="filled" onClose={() => setError(null)}>
-            {error}
-          </Alert>
-        </Snackbar>
-
-        <Snackbar
-          open={!!success}
-          autoHideDuration={4000}
-          onClose={() => setSuccess(null)}
-          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        >
-          <Alert severity="success" variant="filled" onClose={() => setSuccess(null)}>
-            {success}
-          </Alert>
-        </Snackbar>
-
-        <Dialog open={createOpen} onClose={() => setCreateOpen(false)} fullWidth maxWidth="sm">
-          <DialogTitle>Créer un utilisateur</DialogTitle>
-          <DialogContent dividers>
-            <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: '1fr', mt: 1 }}>
-              <TextField
-                label="Nom d'utilisateur"
-                value={createForm.username}
-                onChange={(e) => setCreateForm((f) => ({ ...f, username: e.target.value }))}
-              />
-              <TextField
-                label="Mot de passe"
-                type="password"
-                value={createForm.password}
-                onChange={(e) => setCreateForm((f) => ({ ...f, password: e.target.value }))}
-              />
-              <TextField
-                label="Matricule"
-                value={createForm.matricule}
-                onChange={(e) => setCreateForm((f) => ({ ...f, matricule: e.target.value }))}
-              />
-              <TextField
-                label="Nom complet"
-                value={createForm.nom_complet}
-                onChange={(e) => setCreateForm((f) => ({ ...f, nom_complet: e.target.value }))}
-              />
-              <TextField
-                select
-                label="Rôle"
-                value={createForm.role}
-                onChange={(e) => setCreateForm((f) => ({ ...f, role: e.target.value as CreateUserForm['role'] }))}
-              >
-                {roles.map((r) => (
-                  <MenuItem key={r} value={r}>
-                    {r === 'COLLABORATEUR'
-                      ? 'Collaborateur'
-                      : r === 'RESPONSABLE'
-                        ? 'Responsable'
-                        : r === 'RESPONSABLE_N2'
-                          ? 'Responsable niveau 2'
-                          : 'Administrateur'}
-                  </MenuItem>
-                ))}
-              </TextField>
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setCreateOpen(false)}>Annuler</Button>
-            <Button variant="contained" onClick={() => void createUser()}>
-              Créer
-            </Button>
-          </DialogActions>
-        </Dialog>
-
-        <Dialog open={!!deleteDepenseId} onClose={() => setDeleteDepenseId(null)} fullWidth maxWidth="xs">
-          <DialogTitle>Supprimer la dépense</DialogTitle>
-          <DialogContent dividers>
-            <Typography>
-              Cette action supprimera définitivement la dépense.
-            </Typography>
-          </DialogContent>
-          <DialogActions>
-            <Button disabled={deletingDepense} onClick={() => setDeleteDepenseId(null)}>
-              Annuler
-            </Button>
-            <Button
-              color="error"
-              variant="contained"
-              disabled={deletingDepense}
-              onClick={async () => {
-                if (!deleteDepenseId) return;
-                setDeletingDepense(true);
-                setError(null);
-                setSuccess(null);
-                try {
-                  const { data: deletedRows, error: de } = await supabase
-                    .from('depenses')
-                    .delete()
-                    .eq('id', deleteDepenseId)
-                    .select('id');
-                  if (de) throw de;
-                  if (!deletedRows || deletedRows.length === 0) {
-                    throw new Error('Delete was not applied (RLS or permissions).');
-                  }
-                  setDepenses((prev) => prev.filter((x) => x.id !== deleteDepenseId));
+          <Dialog open={!!deleteDepenseId} onClose={() => setDeleteDepenseId(null)} fullWidth maxWidth="xs">
+            <DialogTitle>Supprimer la dépense</DialogTitle>
+            <DialogContent dividers>
+              <Typography>
+                Cette action supprimera définitivement la dépense.
+              </Typography>
+            </DialogContent>
+            <DialogActions>
+              <Button disabled={deletingDepense} onClick={() => setDeleteDepenseId(null)}>
+                Annuler
+              </Button>
+              <Button
+                color="error"
+                variant="contained"
+                disabled={deletingDepense}
+                onClick={async () => {
+                  if (!deleteDepenseId) return;
+                  setDeletingDepense(true);
+                  setError(null);
+                  setSuccess(null);
                   try {
-                    const { data: deps, error: de2 } = await supabase
+                    const { data: deletedRows, error: de } = await supabase
                       .from('depenses')
-                      .select(
-                        'id, date_depense, categorie, montant_ttc, statut, saisisseur_id, ligne, sous_ligne, libelle, mode_reglement, nom_beneficiaire_reglement'
-                      )
-                      .order('date_depense', { ascending: false })
-                      .limit(200);
-                    if (!de2) setDepenses((deps ?? []) as DepenseRow[]);
-                  } catch {
-                    // ignore refresh errors
+                      .delete()
+                      .eq('id', deleteDepenseId)
+                      .select('id');
+                    if (de) throw de;
+                    if (!deletedRows || deletedRows.length === 0) {
+                      throw new Error('Delete was not applied (RLS or permissions).');
+                    }
+                    setDepenses((prev) => prev.filter((x) => x.id !== deleteDepenseId));
+                    try {
+                      const { data: deps, error: de2 } = await supabase
+                        .from('depenses')
+                        .select(
+                          'id, date_depense, categorie, montant_ttc, statut, saisisseur_id, ligne, sous_ligne, libelle, mode_reglement, nom_beneficiaire_reglement'
+                        )
+                        .order('date_depense', { ascending: false })
+                        .limit(200);
+                      if (!de2) setDepenses((deps ?? []) as DepenseRow[]);
+                    } catch {
+                      // ignore refresh errors
+                    }
+                    setSuccess('Dépense supprimée.');
+                    setDeleteDepenseId(null);
+                  } catch (e: unknown) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setDeletingDepense(false);
                   }
-                  setSuccess('Dépense supprimée.');
-                  setDeleteDepenseId(null);
-                } catch (e: unknown) {
-                  setError(e instanceof Error ? e.message : String(e));
-                } finally {
-                  setDeletingDepense(false);
-                }
-              }}
-            >
-              Supprimer
-            </Button>
-          </DialogActions>
-        </Dialog>
+                }}
+              >
+                Supprimer
+              </Button>
+            </DialogActions>
+          </Dialog>
         </Paper>
       </Container>
     </>

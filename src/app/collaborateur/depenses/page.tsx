@@ -265,6 +265,9 @@ export default function CollaborateurDepensesPage() {
   const [reglementError, setReglementError] = React.useState<string | null>(null);
   const [reglementSuccess, setReglementSuccess] = React.useState<string | null>(null);
   const [pjError, setPjError] = React.useState<string | null>(null);
+  const [pjPreviewOpen, setPjPreviewOpen] = React.useState(false);
+  const [pjSignedUrl, setPjSignedUrl] = React.useState<string | null>(null);
+  const [pjContentType, setPjContentType] = React.useState<string | null>(null);
   const [isReglementSubmitting, setIsReglementSubmitting] = React.useState(false);
 
   const {
@@ -327,18 +330,46 @@ export default function CollaborateurDepensesPage() {
 
   const openPieceJustificative = async (d: DepenseRow) => {
     setPjError(null);
-    if (!d.piece_justificative_url) return;
+    setPjSignedUrl(null);
+    setPjContentType(null);
+    const path = (d.piece_justificative_url ?? '').toString();
+    if (!path) return;
+
+    const lower = path.toLowerCase();
+    const ext = lower.includes('.') ? lower.split('.').pop() ?? '' : '';
+    const contentTypeByExt: Record<string, string> = {
+      pdf: 'application/pdf',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      webp: 'image/webp',
+    };
+    const inferredType = contentTypeByExt[ext] ?? null;
+
     const { data, error } = await supabase
       .storage
       .from('pieces-justificatives')
-      .createSignedUrl(d.piece_justificative_url, 60 * 5);
+      .createSignedUrl(path, 60 * 5);
 
     if (error || !data?.signedUrl) {
       setPjError(error?.message ?? "Impossible d'ouvrir la pièce justificative.");
       return;
     }
-    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    
+    setPjSignedUrl(data.signedUrl);
+    setPjContentType(inferredType);
+    setPjPreviewOpen(true);
   };
+
+  const isImagePreview = React.useMemo(() => {
+    const t = (pjContentType ?? '').toLowerCase();
+    return t.startsWith('image/');
+  }, [pjContentType]);
+
+  const isPdfPreview = React.useMemo(() => {
+    const t = (pjContentType ?? '').toLowerCase();
+    return t === 'application/pdf';
+  }, [pjContentType]);
 
   const downloadTicketPdf = (d: DepenseRow) => {
     const ticketNo = `n°${d.id.slice(0, 4).toUpperCase()}`;
@@ -551,7 +582,7 @@ export default function CollaborateurDepensesPage() {
       if (verifyError || !verifyData?.signedUrl) {
         setReglementError(
           (verifyError?.message ?? "Impossible de vérifier l'upload de la pièce de règlement.") +
-            ` (${storedPath})`
+          ` (${storedPath})`
         );
         return;
       }
@@ -777,6 +808,18 @@ export default function CollaborateurDepensesPage() {
     console.log('V2 sous_ligne options:', opt);
   }, [v2FieldBySystemKey]);
 
+  const sousLigneValideurMap = React.useMemo((): Record<string, string> => {
+    const opts = v2FieldBySystemKey.get('sous_ligne')?.options;
+    if (!opts || typeof opts !== 'object' || Array.isArray(opts)) return {};
+    const raw = (opts as Record<string, unknown>)._valideur_map;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === 'string' && v.trim()) out[k] = v;
+    }
+    return out;
+  }, [v2FieldBySystemKey]);
+
   const montantHt = watch('montantHt');
   const tva = watch('tva');
   const montantTva = watch('montantTva');
@@ -832,19 +875,19 @@ export default function CollaborateurDepensesPage() {
 
   const handleMontantChange =
     (field: 'montantHt') =>
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const cleaned = sanitizeAmountInput(e.target.value);
+      (e: React.ChangeEvent<HTMLInputElement>) => {
+        const cleaned = sanitizeAmountInput(e.target.value);
 
-      const numericValue = cleaned === '' ? 0 : Number(cleaned);
-      setValue(field, numericValue, { shouldValidate: true });
+        const numericValue = cleaned === '' ? 0 : Number(cleaned);
+        setValue(field, numericValue, { shouldValidate: true });
 
-      const currentHt = numericValue;
-      const nextTva = tvaRate == null ? montantTva : currentHt * tvaRate;
-      setValue('montantTva', nextTva, { shouldValidate: true });
+        const currentHt = numericValue;
+        const nextTva = tvaRate == null ? montantTva : currentHt * tvaRate;
+        setValue('montantTva', nextTva, { shouldValidate: true });
 
-      const nextTtc = currentHt + nextTva;
-      setValue('montantTtc', nextTtc, { shouldValidate: true });
-    };
+        const nextTtc = currentHt + nextTva;
+        setValue('montantTtc', nextTtc, { shouldValidate: true });
+      };
 
   const handleTvaSelectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.value as ExpenseFormValues['tva'];
@@ -968,6 +1011,7 @@ export default function CollaborateurDepensesPage() {
         sous_ligne: data.sousLigne,
         libelle: data.libelle,
         piece_justificative_url: pieceJustificativePath,
+        valideur_id: (data.sousLigne && sousLigneValideurMap[data.sousLigne]) ? sousLigneValideurMap[data.sousLigne] : null,
         custom_fields: {
           ...v2CustomPayload,
         },
@@ -991,7 +1035,7 @@ export default function CollaborateurDepensesPage() {
       } else {
         setSubmitError(
           insertError.message ||
-            'Insertion Supabase échouée. Vérifiez l\'authentification et les policies RLS.'
+          'Insertion Supabase échouée. Vérifiez l\'authentification et les policies RLS.'
         );
       }
 
@@ -1174,9 +1218,9 @@ export default function CollaborateurDepensesPage() {
           overflowX: 'hidden',
         }}
       >
-          <Typography variant="h5" sx={{ mb: 2 }}>
-            Espace Collaborateur
-          </Typography>
+        <Typography variant="h5" sx={{ mb: 2 }}>
+          Espace Collaborateur
+        </Typography>
 
         <Snackbar
           open={submitSuccess.open}
@@ -1304,660 +1348,687 @@ export default function CollaborateurDepensesPage() {
                   }}
                 />
 
-                  {isSystemFieldEnabled('categorie') ? (
-                    <TextField
-                      select
-                      label="Catégorie"
-                      fullWidth
-                      {...register('categorie')}
-                      value={watch('categorie')}
-                      size="small"
-                      error={!!errors.categorie}
-                      helperText={errors.categorie?.message}
-                    >
-                      <MenuItem value="">Tous</MenuItem>
-                      {categorieOptions.map((o) => (
-                        <MenuItem key={o} value={o}>
-                          {prettyText(o)}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  ) : null}
-
-                  {isSystemFieldEnabled('ligne') ? (
-                    <TextField
-                      select
-                      label="Ligne"
-                      fullWidth
-                      {...register('ligne')}
-                      value={watch('ligne')}
-                      size="small"
-                      error={!!errors.ligne}
-                      helperText={errors.ligne?.message}
-                    >
-                      <MenuItem value="">Tous</MenuItem>
-                      {ligneOptions.map((o) => (
-                        <MenuItem key={o} value={o}>
-                          {prettyText(o)}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  ) : null}
-
-                  {ligneValue === 'frais_personnel' && (
-                    <>
-                      {isSystemFieldEnabled('nom_beneficiaire') ? (
-                        <TextField
-                          label="Nom bénéficiaire"
-                          fullWidth
-                          size="small"
-                          {...register('nomBeneficiaire')}
-                        />
-                      ) : null}
-
-                      {isSystemFieldEnabled('mois') ? (
-                        <TextField
-                          select
-                          label="Mois"
-                          fullWidth
-                          size="small"
-                          {...register('mois')}
-                          value={watch('mois')}
-                        >
-                          <MenuItem value="">Sélectionner</MenuItem>
-                          <MenuItem value="01">Janvier</MenuItem>
-                          <MenuItem value="02">Février</MenuItem>
-                          <MenuItem value="03">Mars</MenuItem>
-                          <MenuItem value="04">Avril</MenuItem>
-                          <MenuItem value="05">Mai</MenuItem>
-                          <MenuItem value="06">Juin</MenuItem>
-                          <MenuItem value="07">Juillet</MenuItem>
-                          <MenuItem value="08">Août</MenuItem>
-                          <MenuItem value="09">Septembre</MenuItem>
-                          <MenuItem value="10">Octobre</MenuItem>
-                          <MenuItem value="11">Novembre</MenuItem>
-                          <MenuItem value="12">Décembre</MenuItem>
-                        </TextField>
-                      ) : null}
-                    </>
-                  )}
-
-                  {ligneValue === 'carburant' && (
-                    <>
-                      {isSystemFieldEnabled('nom_beneficiaire') ? (
-                        <TextField
-                          label="Nom bénéficiaire"
-                          fullWidth
-                          size="small"
-                          {...register('nomBeneficiaire')}
-                        />
-                      ) : null}
-
-                      {isSystemFieldEnabled('nom_vehicule') ? (
-                        <TextField
-                          label="Nom véhicule"
-                          fullWidth
-                          size="small"
-                          {...register('nomVehicule')}
-                        />
-                      ) : null}
-                    </>
-                  )}
-
-                  {ligneValue === 'commission_intermediaire' && (
-                    isSystemFieldEnabled('nom_commercial') ? (
-                      <TextField
-                        label="Nom Commercial"
-                        fullWidth
-                        size="small"
-                        {...register('nomCommercial')}
-                      />
-                    ) : null
-                  )}
-
-                  {ligneValue === 'stock' && (
-                    <>
-                      {isSystemFieldEnabled('provenance') ? (
-                        <TextField
-                          label="Provenance"
-                          fullWidth
-                          size="small"
-                          {...register('provenance')}
-                        />
-                      ) : null}
-
-                      {isSystemFieldEnabled('nom_produit') ? (
-                        <TextField
-                          label="Nom du produit"
-                          fullWidth
-                          size="small"
-                          {...register('nomProduit')}
-                        />
-                      ) : null}
-
-                      {isSystemFieldEnabled('quantite_kg') ? (
-                        <TextField
-                          type="number"
-                          label="Quantité (kg)"
-                          fullWidth
-                          size="small"
-                          {...register('quantiteKg', { valueAsNumber: true })}
-                        />
-                      ) : null}
-
-                      {isSystemFieldEnabled('dossier_importation') ? (
-                        <TextField
-                          label="Dossier d'importation"
-                          fullWidth
-                          size="small"
-                          {...register('dossierImportation')}
-                        />
-                      ) : null}
-                    </>
-                  )}
-
-                  {isSystemFieldEnabled('sous_ligne') ? (
-                    <TextField
-                      select
-                      label="Sous-ligne"
-                      fullWidth
-                      {...register('sousLigne')}
-                      value={watch('sousLigne')}
-                      size="small"
-                      error={!!errors.sousLigne}
-                      helperText={errors.sousLigne?.message}
-                    >
-                      <MenuItem value="">Tous</MenuItem>
-                      {sousLigneOptions.map((o) => (
-                        <MenuItem key={o} value={o}>
-                          {prettyText(o)}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  ) : null}
-
-                  <TextField
-                    label="Montant HT"
-                    fullWidth
-                    type="text"
-                    value={montantHt === 0 ? '' : formatDzd(montantHt)}
-                    size="small"
-                    inputProps={{
-                      step: '0.01',
-                      inputMode: 'decimal',
-                      pattern: '^[0-9]*[.,]?[0-9]*$',
-                    }}
-                    onKeyDown={preventNonNumericKeys}
-                    onChange={handleMontantChange('montantHt')}
-                    error={!!errors.montantHt}
-                    helperText={errors.montantHt?.message}
-                    InputProps={{
-                      endAdornment: (
-                        <InputAdornment position="end">DZD</InputAdornment>
-                      ),
-                    }}
-                  />
-
+                {isSystemFieldEnabled('categorie') ? (
                   <TextField
                     select
-                    label="TVA"
+                    label="Catégorie"
                     fullWidth
+                    {...register('categorie')}
+                    value={watch('categorie')}
                     size="small"
-                    value={tva}
-                    onChange={handleTvaSelectChange}
-                    error={!!errors.tva}
-                    helperText={errors.tva?.message}
+                    error={!!errors.categorie}
+                    helperText={errors.categorie?.message}
                   >
-                    <MenuItem value="19%">19%</MenuItem>
-                    <MenuItem value="9%">9%</MenuItem>
-                    <MenuItem value="0%">0%</MenuItem>
-                    <MenuItem value="NC">NC</MenuItem>
+                    <MenuItem value="">Tous</MenuItem>
+                    {categorieOptions.map((o) => (
+                      <MenuItem key={o} value={o}>
+                        {prettyText(o)}
+                      </MenuItem>
+                    ))}
                   </TextField>
+                ) : null}
 
+                {isSystemFieldEnabled('ligne') ? (
                   <TextField
-                    label="Montant TVA"
+                    select
+                    label="Ligne"
                     fullWidth
-                    type="text"
-                    value={montantTva === 0 ? '' : formatDzd(montantTva)}
+                    {...register('ligne')}
+                    value={watch('ligne')}
                     size="small"
-                    inputProps={{
-                      step: '0.01',
-                      readOnly: tva !== 'NC',
-                      inputMode: 'decimal',
-                      pattern: '^[0-9]*[.,]?[0-9]*$',
-                    }}
-                    onKeyDown={tva === 'NC' ? preventNonNumericKeys : undefined}
-                    onChange={tva === 'NC' ? handleMontantTvaManualChange : undefined}
-                    error={!!errors.montantTva}
-                    helperText={errors.montantTva?.message}
-                    InputProps={{
-                      endAdornment: (
-                        <InputAdornment position="end">DZD</InputAdornment>
-                      ),
-                    }}
-                  />
+                    error={!!errors.ligne}
+                    helperText={errors.ligne?.message}
+                  >
+                    <MenuItem value="">Tous</MenuItem>
+                    {ligneOptions.map((o) => (
+                      <MenuItem key={o} value={o}>
+                        {prettyText(o)}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                ) : null}
 
-                  <TextField
-                    label="Montant TTC"
-                    fullWidth
-                    type="text"
-                    inputProps={{
-                      step: '0.01',
-                      readOnly: true,
-                      inputMode: 'decimal',
-                      pattern: '^[0-9]*[.,]?[0-9]*$',
-                    }}
-                    value={montantTtc === 0 ? '' : formatDzd(montantTtc)}
-                    size="small"
-                    error={!!errors.montantTtc}
-                    helperText={errors.montantTtc?.message}
-                    InputProps={{
-                      endAdornment: (
-                        <InputAdornment position="end">DZD</InputAdornment>
-                      ),
-                    }}
-                  />
+                {ligneValue === 'frais_personnel' && (
+                  <>
+                    {isSystemFieldEnabled('nom_beneficiaire') ? (
+                      <TextField
+                        label="Nom bénéficiaire"
+                        fullWidth
+                        size="small"
+                        {...register('nomBeneficiaire')}
+                      />
+                    ) : null}
 
-                  <TextField
-                    label="Libellé dépense"
-                    fullWidth
-                    multiline
-                    minRows={2}
-                    size="small"
-                    {...register('libelle')}
-                    spellCheck
-                    autoCorrect="on"
-                    inputProps={{ maxLength: 255 }}
-                    error={!!errors.libelle || libelle.length === 255}
-                    helperText={
-                      errors.libelle?.message ??
-                      `${libelle.length}/255 caractères`
-                    }
-                  />
+                    {isSystemFieldEnabled('mois') ? (
+                      <TextField
+                        select
+                        label="Mois"
+                        fullWidth
+                        size="small"
+                        {...register('mois')}
+                        value={watch('mois')}
+                      >
+                        <MenuItem value="">Sélectionner</MenuItem>
+                        <MenuItem value="01">Janvier</MenuItem>
+                        <MenuItem value="02">Février</MenuItem>
+                        <MenuItem value="03">Mars</MenuItem>
+                        <MenuItem value="04">Avril</MenuItem>
+                        <MenuItem value="05">Mai</MenuItem>
+                        <MenuItem value="06">Juin</MenuItem>
+                        <MenuItem value="07">Juillet</MenuItem>
+                        <MenuItem value="08">Août</MenuItem>
+                        <MenuItem value="09">Septembre</MenuItem>
+                        <MenuItem value="10">Octobre</MenuItem>
+                        <MenuItem value="11">Novembre</MenuItem>
+                        <MenuItem value="12">Décembre</MenuItem>
+                      </TextField>
+                    ) : null}
+                  </>
+                )}
 
-                  {isSystemFieldEnabled('fournisseur') ? (
+                {ligneValue === 'carburant' && (
+                  <>
+                    {isSystemFieldEnabled('nom_beneficiaire') ? (
+                      <TextField
+                        label="Nom bénéficiaire"
+                        fullWidth
+                        size="small"
+                        {...register('nomBeneficiaire')}
+                      />
+                    ) : null}
+
+                    {isSystemFieldEnabled('nom_vehicule') ? (
+                      <TextField
+                        label="Nom véhicule"
+                        fullWidth
+                        size="small"
+                        {...register('nomVehicule')}
+                      />
+                    ) : null}
+                  </>
+                )}
+
+                {ligneValue === 'commission_intermediaire' && (
+                  isSystemFieldEnabled('nom_commercial') ? (
                     <TextField
-                      label="Fournisseur"
+                      label="Nom Commercial"
                       fullWidth
                       size="small"
-                      {...register('fournisseur')}
+                      {...register('nomCommercial')}
                     />
-                  ) : null}
+                  ) : null
+                )}
 
-                  {v2Fields
-                    .filter((f) => f.target === 'CUSTOM_JSON' && f.enabled && f.type === 'text')
-                    .slice()
-                    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-                    .map((f) => {
-                      const k = getCustomFieldKeyV2(f);
-                      if (!k) return null;
-                      return (
-                        <TextField
-                          key={f.id}
-                          label={f.label}
-                          fullWidth
-                          size="small"
-                          value={(customValues?.[k] ?? '').toString()}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setCustomValues((prev) => ({ ...prev, [k]: v }));
-                          }}
-                        />
-                      );
-                    })}
+                {ligneValue === 'stock' && (
+                  <>
+                    {isSystemFieldEnabled('provenance') ? (
+                      <TextField
+                        label="Provenance"
+                        fullWidth
+                        size="small"
+                        {...register('provenance')}
+                      />
+                    ) : null}
 
-                  <Box>
-                    <Button variant="outlined" component="label">
-                      Pièce justificative
-                      <input
-                        type="file"
-                        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                        hidden
+                    {isSystemFieldEnabled('nom_produit') ? (
+                      <TextField
+                        label="Nom du produit"
+                        fullWidth
+                        size="small"
+                        {...register('nomProduit')}
+                      />
+                    ) : null}
+
+                    {isSystemFieldEnabled('quantite_kg') ? (
+                      <TextField
+                        type="number"
+                        label="Quantité (kg)"
+                        fullWidth
+                        size="small"
+                        {...register('quantiteKg', { valueAsNumber: true })}
+                      />
+                    ) : null}
+
+                    {isSystemFieldEnabled('dossier_importation') ? (
+                      <TextField
+                        label="Dossier d'importation"
+                        fullWidth
+                        size="small"
+                        {...register('dossierImportation')}
+                      />
+                    ) : null}
+                  </>
+                )}
+
+                {isSystemFieldEnabled('sous_ligne') ? (
+                  <TextField
+                    select
+                    label="Sous-ligne"
+                    fullWidth
+                    {...register('sousLigne')}
+                    value={watch('sousLigne')}
+                    size="small"
+                    error={!!errors.sousLigne}
+                    helperText={errors.sousLigne?.message}
+                  >
+                    <MenuItem value="">Tous</MenuItem>
+                    {sousLigneOptions.map((o) => (
+                      <MenuItem key={o} value={o}>
+                        {prettyText(o)}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                ) : null}
+
+                <TextField
+                  label="Montant HT"
+                  fullWidth
+                  type="text"
+                  value={montantHt === 0 ? '' : formatDzd(montantHt)}
+                  size="small"
+                  inputProps={{
+                    step: '0.01',
+                    inputMode: 'decimal',
+                    pattern: '^[0-9]*[.,]?[0-9]*$',
+                  }}
+                  onKeyDown={preventNonNumericKeys}
+                  onChange={handleMontantChange('montantHt')}
+                  error={!!errors.montantHt}
+                  helperText={errors.montantHt?.message}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">DZD</InputAdornment>
+                    ),
+                  }}
+                />
+
+                <TextField
+                  select
+                  label="TVA"
+                  fullWidth
+                  size="small"
+                  value={tva}
+                  onChange={handleTvaSelectChange}
+                  error={!!errors.tva}
+                  helperText={errors.tva?.message}
+                >
+                  <MenuItem value="19%">19%</MenuItem>
+                  <MenuItem value="9%">9%</MenuItem>
+                  <MenuItem value="0%">0%</MenuItem>
+                  <MenuItem value="NC">NC</MenuItem>
+                </TextField>
+
+                <TextField
+                  label="Montant TVA"
+                  fullWidth
+                  type="text"
+                  value={montantTva === 0 ? '' : formatDzd(montantTva)}
+                  size="small"
+                  inputProps={{
+                    step: '0.01',
+                    readOnly: tva !== 'NC',
+                    inputMode: 'decimal',
+                    pattern: '^[0-9]*[.,]?[0-9]*$',
+                  }}
+                  onKeyDown={tva === 'NC' ? preventNonNumericKeys : undefined}
+                  onChange={tva === 'NC' ? handleMontantTvaManualChange : undefined}
+                  error={!!errors.montantTva}
+                  helperText={errors.montantTva?.message}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">DZD</InputAdornment>
+                    ),
+                  }}
+                />
+
+                <TextField
+                  label="Montant TTC"
+                  fullWidth
+                  type="text"
+                  inputProps={{
+                    step: '0.01',
+                    readOnly: true,
+                    inputMode: 'decimal',
+                    pattern: '^[0-9]*[.,]?[0-9]*$',
+                  }}
+                  value={montantTtc === 0 ? '' : formatDzd(montantTtc)}
+                  size="small"
+                  error={!!errors.montantTtc}
+                  helperText={errors.montantTtc?.message}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">DZD</InputAdornment>
+                    ),
+                  }}
+                />
+
+                <TextField
+                  label="Libellé dépense"
+                  fullWidth
+                  multiline
+                  minRows={2}
+                  size="small"
+                  {...register('libelle')}
+                  spellCheck
+                  autoCorrect="on"
+                  inputProps={{ maxLength: 255 }}
+                  error={!!errors.libelle || libelle.length === 255}
+                  helperText={
+                    errors.libelle?.message ??
+                    `${libelle.length}/255 caractères`
+                  }
+                />
+
+                {isSystemFieldEnabled('fournisseur') ? (
+                  <TextField
+                    label="Fournisseur"
+                    fullWidth
+                    size="small"
+                    {...register('fournisseur')}
+                  />
+                ) : null}
+
+                {v2Fields
+                  .filter((f) => f.target === 'CUSTOM_JSON' && f.enabled && f.type === 'text')
+                  .slice()
+                  .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+                  .map((f) => {
+                    const k = getCustomFieldKeyV2(f);
+                    if (!k) return null;
+                    return (
+                      <TextField
+                        key={f.id}
+                        label={f.label}
+                        fullWidth
+                        size="small"
+                        value={(customValues?.[k] ?? '').toString()}
                         onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          setValue('pieceJustificative', file, {
-                            shouldValidate: true,
-                          });
+                          const v = e.target.value;
+                          setCustomValues((prev) => ({ ...prev, [k]: v }));
                         }}
                       />
-                    </Button>
-                    {pieceJustificativeFile instanceof File ? (
-                      <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
-                        {pieceJustificativeFile.name}
-                      </Typography>
-                    ) : null}
-                    {errors.pieceJustificative && (
-                      <Typography color="error" variant="body2">
-                        {errors.pieceJustificative.message as string}
-                      </Typography>
-                    )}
-                  </Box>
+                    );
+                  })}
 
-                  <Button
-                    type="submit"
-                    variant="contained"
-                    fullWidth
-                    disabled={isSubmitting}
-                  >
-                    TERMINER LA SAISIE
+                <Box>
+                  <Button variant="outlined" component="label">
+                    Pièce justificative
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                      hidden
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        setValue('pieceJustificative', file, {
+                          shouldValidate: true,
+                        });
+                      }}
+                    />
                   </Button>
+                  {pieceJustificativeFile instanceof File ? (
+                    <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
+                      {pieceJustificativeFile.name}
+                    </Typography>
+                  ) : null}
+                  {errors.pieceJustificative && (
+                    <Typography color="error" variant="body2">
+                      {errors.pieceJustificative.message as string}
+                    </Typography>
+                  )}
                 </Box>
+
+                <Button
+                  type="submit"
+                  variant="contained"
+                  fullWidth
+                  disabled={isSubmitting}
+                >
+                  TERMINER LA SAISIE
+                </Button>
+              </Box>
             </Box>
           </Paper>
 
-              <Paper
-                sx={{
-                  p: { xs: 2, sm: 3 },
-                  minHeight: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  overflow: 'hidden',
-                }}
-              >
-                <Typography
-                  variant="h6"
-                  gutterBottom
-                  sx={{ fontSize: { xs: '1.05rem', sm: '1.15rem' } }}
-                >
-                  Mes saisies
-                </Typography>
+          <Paper
+            sx={{
+              p: { xs: 2, sm: 3 },
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <Typography
+              variant="h6"
+              gutterBottom
+              sx={{ fontSize: { xs: '1.05rem', sm: '1.15rem' } }}
+            >
+              Mes saisies
+            </Typography>
 
-                <Box sx={{ width: '100%', overflowX: 'auto', flex: 1, minHeight: 0 }}>
-                  <Table size="small" sx={{ minWidth: 520 }}>
-                    <TableHead>
-                      <TableRow
-                        sx={{
-                          '& th': {
-                            backgroundColor: '#217346',
-                            color: '#fff',
-                            fontWeight: 700,
-                          },
-                        }}
-                      >
-                        <TableCell>Date</TableCell>
-                        <TableCell>Catégorie</TableCell>
-                        <TableCell align="right">Montant TTC</TableCell>
-                        <TableCell>Statut</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {depensesSoumises.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={4} sx={{ whiteSpace: 'nowrap' }}>
-                            Aucune saisie trouvée.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        depensesSoumises.map((d) => (
-                          <TableRow
-                            key={d.id}
-                            hover
-                            onClick={() => setSelectedDepense(d)}
-                            sx={{ cursor: 'pointer' }}
-                          >
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                              {d.date_depense}
-                            </TableCell>
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                              {prettyText(d.categorie)}
-                            </TableCell>
-                            <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                              {formatDzd(d.montant_ttc)}
-                            </TableCell>
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                              {normalizeStatut(d.statut)}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </Box>
-              </Paper>
-
-              <Paper
-                sx={{
-                  p: { xs: 2, sm: 3 },
-                  minHeight: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  overflow: 'hidden',
-                }}
-              >
-                <Typography
-                  variant="h6"
-                  gutterBottom
-                  sx={{ fontSize: { xs: '1.05rem', sm: '1.15rem' } }}
-                >
-                  Règlement des dépenses
-                </Typography>
-
-                <Box
-                  sx={{
-                    width: '100%',
-                    overflowX: 'auto',
-                    flex: 1,
-                    minHeight: 0,
-                  }}
-                >
-                  <Table size="small" sx={{ minWidth: 980 }}>
-                    <TableHead>
-                      <TableRow sx={{ backgroundColor: '#217346' }}>
-                        <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Ligne</TableCell>
-                        <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Sous ligne</TableCell>
-                        <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Libellé</TableCell>
-                        <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Nom du valideur</TableCell>
-                        <TableCell align="right" sx={{ color: '#fff', fontWeight: 700 }}>
-                          Montant TTC
-                        </TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {depensesValidees.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5} sx={{ whiteSpace: 'nowrap' }}>
-                            Aucune dépense validée à régler.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        depensesValidees.map((d) => (
-                          <TableRow
-                            key={d.id}
-                            hover
-                            sx={{ cursor: 'pointer' }}
-                            onClick={() => {
-                              setSelectedReglement(d);
-                              setModeReglement(d.mode_reglement ?? '');
-                              setNomBeneficiaireReglement(d.nom_beneficiaire_reglement ?? '');
-                              setPieceReglement(null);
-                              setReglementError(null);
-                              setReglementSuccess(null);
-                            }}
-                          >
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}>{prettyText(d.ligne)}</TableCell>
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}>{prettyText(d.sous_ligne)}</TableCell>
-                            <TableCell
-                              sx={{ minWidth: 240, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}
-                            >
-                              {d.libelle?.toString() || '-'}
-                            </TableCell>
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                              {d.valideur_id ? valideurNameById.get(d.valideur_id) ?? '—' : '—'}
-                            </TableCell>
-                            <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                              {formatDzd(d.montant_ttc)}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </Box>
-
-                {selectedReglement ? (
-                  <Paper
-                    variant="outlined"
+            <Box sx={{ width: '100%', overflowX: 'auto', flex: 1, minHeight: 0 }}>
+              <Table size="small" sx={{ minWidth: 900 }}>
+                <TableHead>
+                  <TableRow
                     sx={{
-                      mt: 2,
-                      p: 2,
-                      borderRadius: 2,
-                      minHeight: { xs: 220, md: 280 },
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 2,
+                      '& th': {
+                        backgroundColor: '#217346',
+                        color: '#fff',
+                        fontWeight: 700,
+                      },
                     }}
                   >
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
-                      <Typography variant="subtitle1">
-                        {`Dépense n°${selectedReglement.id.slice(0, 4).toUpperCase()}`}
-                      </Typography>
-                      <Button
-                        size="small"
-                        variant="outlined"
+                    <TableCell>Num dépense</TableCell>
+                    <TableCell>Ligne</TableCell>
+                    <TableCell>Sous ligne</TableCell>
+                    <TableCell>Libellé</TableCell>
+                    <TableCell align="right">Montant TTC</TableCell>
+                    <TableCell>Statut</TableCell>
+                    <TableCell>PJ</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {depensesSoumises.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} sx={{ whiteSpace: 'nowrap' }}>
+                        Aucune saisie trouvée.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    depensesSoumises.map((d) => (
+                      <TableRow
+                        key={d.id}
+                        hover
+                        onClick={() => setSelectedDepense(d)}
+                        sx={{ cursor: 'pointer' }}
+                      >
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {`n°${d.id.slice(0, 4).toUpperCase()}`}
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {prettyText(d.ligne)}
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {prettyText(d.sous_ligne)}
+                        </TableCell>
+                        <TableCell
+                          sx={{ minWidth: 220, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}
+                        >
+                          {d.libelle ?? '-'}
+                        </TableCell>
+                        <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                          {formatDzd(d.montant_ttc)} DZD
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {normalizeStatut(d.statut)}
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {d.piece_justificative_url ? (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void openPieceJustificative(d);
+                              }}
+                            >
+                              Voir
+                            </Button>
+                          ) : (
+                            '-'
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </Box>
+          </Paper>
+
+          <Paper
+            sx={{
+              p: { xs: 2, sm: 3 },
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <Typography
+              variant="h6"
+              gutterBottom
+              sx={{ fontSize: { xs: '1.05rem', sm: '1.15rem' } }}
+            >
+              Règlement des dépenses
+            </Typography>
+
+            <Box
+              sx={{
+                width: '100%',
+                overflowX: 'auto',
+                flex: 1,
+                minHeight: 0,
+              }}
+            >
+              <Table size="small" sx={{ minWidth: 980 }}>
+                <TableHead>
+                  <TableRow sx={{ backgroundColor: '#217346' }}>
+                    <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Ligne</TableCell>
+                    <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Sous ligne</TableCell>
+                    <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Libellé</TableCell>
+                    <TableCell sx={{ color: '#fff', fontWeight: 700 }}>Nom du valideur</TableCell>
+                    <TableCell align="right" sx={{ color: '#fff', fontWeight: 700 }}>
+                      Montant TTC
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {depensesValidees.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} sx={{ whiteSpace: 'nowrap' }}>
+                        Aucune dépense validée à régler.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    depensesValidees.map((d) => (
+                      <TableRow
+                        key={d.id}
+                        hover
+                        sx={{ cursor: 'pointer' }}
                         onClick={() => {
-                          setSelectedReglement(null);
-                          setModeReglement('');
-                          setNomBeneficiaireReglement('');
+                          setSelectedReglement(d);
+                          setModeReglement(d.mode_reglement ?? '');
+                          setNomBeneficiaireReglement(d.nom_beneficiaire_reglement ?? '');
                           setPieceReglement(null);
                           setReglementError(null);
                           setReglementSuccess(null);
                         }}
                       >
-                        Fermer
-                      </Button>
-                    </Box>
-
-                    <TextField
-                      select
-                      label="Mode de règlement"
-                      size="small"
-                      value={modeReglement}
-                      onChange={(e) => setModeReglement(e.target.value)}
-                    >
-                      <MenuItem value="">Sélectionner</MenuItem>
-                      <MenuItem value="Espèce">Espèce</MenuItem>
-                      <MenuItem value="Chèque">Chèque</MenuItem>
-                      <MenuItem value="Virement">Virement</MenuItem>
-                    </TextField>
-
-                    <TextField
-                      label="Nom du bénéficiaire"
-                      size="small"
-                      value={nomBeneficiaireReglement}
-                      onChange={(e) => setNomBeneficiaireReglement(e.target.value)}
-                    />
-
-                    <Box>
-                      <Button variant="outlined" component="label">
-                        Numériser
-                        <input
-                          type="file"
-                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                          hidden
-                          onChange={(e) => {
-                            const file = e.target.files?.[0] ?? null;
-                            setPieceReglement(file);
-                          }}
-                        />
-                      </Button>
-                      <Typography variant="body2" sx={{ mt: 0.5 }}>
-                        {pieceReglement ? pieceReglement.name : 'Aucun fichier sélectionné'}
-                      </Typography>
-                    </Box>
-
-                    {reglementError ? (
-                      <Alert severity="error" variant="filled">
-                        {reglementError}
-                      </Alert>
-                    ) : null}
-
-                    {reglementSuccess ? (
-                      <Alert severity="success" variant="filled">
-                        {reglementSuccess}
-                      </Alert>
-                    ) : null}
-
-                    <Box sx={{ mt: 'auto' }}>
-                      <Button
-                        fullWidth
-                        variant="contained"
-                        disabled={isReglementSubmitting}
-                        onClick={submitReglement}
-                      >
-                        Générer ticket de règlement
-                      </Button>
-                    </Box>
-                  </Paper>
-                ) : null}
-
-                <Box sx={{ width: '100%', overflowX: 'auto', mt: 2 }}>
-                  <Table size="small" sx={{ minWidth: 720 }}>
-                    <TableHead>
-                      <TableRow
-                        sx={{
-                          '& th': {
-                            backgroundColor: '#217346',
-                            color: '#fff',
-                            fontWeight: 700,
-                          },
-                        }}
-                      >
-                        <TableCell>Ticket de règlement</TableCell>
-                        <TableCell>Mode de règlement</TableCell>
-                        <TableCell>Nom du bénéficiaire</TableCell>
-                        <TableCell align="right">Montant TTC</TableCell>
-                        <TableCell align="center">PDF</TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>{prettyText(d.ligne)}</TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>{prettyText(d.sous_ligne)}</TableCell>
+                        <TableCell
+                          sx={{ minWidth: 240, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}
+                        >
+                          {d.libelle?.toString() || '-'}
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {d.valideur_id ? valideurNameById.get(d.valideur_id) ?? '—' : '—'}
+                        </TableCell>
+                        <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                          {formatDzd(d.montant_ttc)}
+                        </TableCell>
                       </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {depensesTicketsReglement.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5} sx={{ whiteSpace: 'nowrap' }}>
-                            Aucun ticket généré.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        depensesTicketsReglement.map((t) => (
-                          <TableRow
-                            key={t.id}
-                            hover
-                            sx={{ cursor: 'pointer' }}
-                            onClick={() => handleSelectReglement(t)}
-                          >
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                              {`n°${t.id.slice(0, 4).toUpperCase()}`}
-                            </TableCell>
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                              {t.mode_reglement?.toString().trim() ? t.mode_reglement : '—'}
-                            </TableCell>
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                              {t.nom_beneficiaire_reglement?.toString().trim()
-                                ? t.nom_beneficiaire_reglement
-                                : '—'}
-                            </TableCell>
-                            <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                              {formatDzd(t.montant_ttc)}
-                            </TableCell>
-                            <TableCell align="center" sx={{ whiteSpace: 'nowrap' }}>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  downloadTicketPdf(t);
-                                }}
-                              >
-                                Télécharger
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </Box>
+
+            {selectedReglement ? (
+              <Paper
+                variant="outlined"
+                sx={{
+                  mt: 2,
+                  p: 2,
+                  borderRadius: 2,
+                  minHeight: { xs: 220, md: 280 },
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                }}
+              >
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="subtitle1">
+                    {`Dépense n°${selectedReglement.id.slice(0, 4).toUpperCase()}`}
+                  </Typography>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => {
+                      setSelectedReglement(null);
+                      setModeReglement('');
+                      setNomBeneficiaireReglement('');
+                      setPieceReglement(null);
+                      setReglementError(null);
+                      setReglementSuccess(null);
+                    }}
+                  >
+                    Fermer
+                  </Button>
                 </Box>
 
+                <TextField
+                  select
+                  label="Mode de règlement"
+                  size="small"
+                  value={modeReglement}
+                  onChange={(e) => setModeReglement(e.target.value)}
+                >
+                  <MenuItem value="">Sélectionner</MenuItem>
+                  <MenuItem value="Espèce">Espèce</MenuItem>
+                  <MenuItem value="Chèque">Chèque</MenuItem>
+                  <MenuItem value="Virement">Virement</MenuItem>
+                </TextField>
+
+                <TextField
+                  label="Nom du bénéficiaire"
+                  size="small"
+                  value={nomBeneficiaireReglement}
+                  onChange={(e) => setNomBeneficiaireReglement(e.target.value)}
+                />
+
+                <Box>
+                  <Button variant="outlined" component="label">
+                    Numériser
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                      hidden
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] ?? null;
+                        setPieceReglement(file);
+                      }}
+                    />
+                  </Button>
+                  <Typography variant="body2" sx={{ mt: 0.5 }}>
+                    {pieceReglement ? pieceReglement.name : 'Aucun fichier sélectionné'}
+                  </Typography>
+                </Box>
+
+                {reglementError ? (
+                  <Alert severity="error" variant="filled">
+                    {reglementError}
+                  </Alert>
+                ) : null}
+
+                {reglementSuccess ? (
+                  <Alert severity="success" variant="filled">
+                    {reglementSuccess}
+                  </Alert>
+                ) : null}
+
+                <Box sx={{ mt: 'auto' }}>
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    disabled={isReglementSubmitting}
+                    onClick={submitReglement}
+                  >
+                    Générer ticket de règlement
+                  </Button>
+                </Box>
               </Paper>
+            ) : null}
+
+            <Box sx={{ width: '100%', overflowX: 'auto', mt: 2 }}>
+              <Table size="small" sx={{ minWidth: 720 }}>
+                <TableHead>
+                  <TableRow
+                    sx={{
+                      '& th': {
+                        backgroundColor: '#217346',
+                        color: '#fff',
+                        fontWeight: 700,
+                      },
+                    }}
+                  >
+                    <TableCell>Ticket de règlement</TableCell>
+                    <TableCell>Mode de règlement</TableCell>
+                    <TableCell>Nom du bénéficiaire</TableCell>
+                    <TableCell align="right">Montant TTC</TableCell>
+                    <TableCell align="center">PDF</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {depensesTicketsReglement.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} sx={{ whiteSpace: 'nowrap' }}>
+                        Aucun ticket généré.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    depensesTicketsReglement.map((t) => (
+                      <TableRow
+                        key={t.id}
+                        hover
+                        sx={{ cursor: 'pointer' }}
+                        onClick={() => handleSelectReglement(t)}
+                      >
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {`n°${t.id.slice(0, 4).toUpperCase()}`}
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {t.mode_reglement?.toString().trim() ? t.mode_reglement : '—'}
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {t.nom_beneficiaire_reglement?.toString().trim()
+                            ? t.nom_beneficiaire_reglement
+                            : '—'}
+                        </TableCell>
+                        <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                          {formatDzd(t.montant_ttc)}
+                        </TableCell>
+                        <TableCell align="center" sx={{ whiteSpace: 'nowrap' }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadTicketPdf(t);
+                            }}
+                          >
+                            Télécharger
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </Box>
+
+          </Paper>
         </Box>
 
         <Dialog
@@ -2078,41 +2149,41 @@ export default function CollaborateurDepensesPage() {
               {(((selectedDepense?.custom_fields as { nomCommercial?: unknown } | null | undefined)
                 ?.nomCommercial as string | undefined) ||
                 selectedDepense?.nom_commercial) && (
-                <Box>
-                  <Typography variant="subtitle2">Nom Commercial</Typography>
-                  <Typography variant="body1">
-                    {((selectedDepense?.custom_fields as { nomCommercial?: unknown } | null | undefined)
-                      ?.nomCommercial as string | undefined) ??
-                      selectedDepense?.nom_commercial}
-                  </Typography>
-                </Box>
-              )}
+                  <Box>
+                    <Typography variant="subtitle2">Nom Commercial</Typography>
+                    <Typography variant="body1">
+                      {((selectedDepense?.custom_fields as { nomCommercial?: unknown } | null | undefined)
+                        ?.nomCommercial as string | undefined) ??
+                        selectedDepense?.nom_commercial}
+                    </Typography>
+                  </Box>
+                )}
 
               {(((selectedDepense?.custom_fields as { provenance?: unknown } | null | undefined)
                 ?.provenance as string | undefined) ||
                 selectedDepense?.provenance) && (
-                <Box>
-                  <Typography variant="subtitle2">Provenance</Typography>
-                  <Typography variant="body1">
-                    {((selectedDepense?.custom_fields as { provenance?: unknown } | null | undefined)
-                      ?.provenance as string | undefined) ??
-                      selectedDepense?.provenance}
-                  </Typography>
-                </Box>
-              )}
+                  <Box>
+                    <Typography variant="subtitle2">Provenance</Typography>
+                    <Typography variant="body1">
+                      {((selectedDepense?.custom_fields as { provenance?: unknown } | null | undefined)
+                        ?.provenance as string | undefined) ??
+                        selectedDepense?.provenance}
+                    </Typography>
+                  </Box>
+                )}
 
               {(((selectedDepense?.custom_fields as { nomProduit?: unknown } | null | undefined)
                 ?.nomProduit as string | undefined) ||
                 selectedDepense?.nom_produit) && (
-                <Box>
-                  <Typography variant="subtitle2">Nom du produit</Typography>
-                  <Typography variant="body1">
-                    {((selectedDepense?.custom_fields as { nomProduit?: unknown } | null | undefined)
-                      ?.nomProduit as string | undefined) ??
-                      selectedDepense?.nom_produit}
-                  </Typography>
-                </Box>
-              )}
+                  <Box>
+                    <Typography variant="subtitle2">Nom du produit</Typography>
+                    <Typography variant="body1">
+                      {((selectedDepense?.custom_fields as { nomProduit?: unknown } | null | undefined)
+                        ?.nomProduit as string | undefined) ??
+                        selectedDepense?.nom_produit}
+                    </Typography>
+                  </Box>
+                )}
 
               {((typeof (selectedDepense?.custom_fields as { quantiteKg?: unknown } | null | undefined)
                 ?.quantiteKg === 'number' &&
@@ -2134,28 +2205,28 @@ export default function CollaborateurDepensesPage() {
               {(((selectedDepense?.custom_fields as { dossierImportation?: unknown } | null | undefined)
                 ?.dossierImportation as string | undefined) ||
                 selectedDepense?.dossier_importation) && (
-                <Box>
-                  <Typography variant="subtitle2">Dossier d'importation</Typography>
-                  <Typography variant="body1">
-                    {((selectedDepense?.custom_fields as { dossierImportation?: unknown } | null | undefined)
-                      ?.dossierImportation as string | undefined) ??
-                      selectedDepense?.dossier_importation}
-                  </Typography>
-                </Box>
-              )}
+                  <Box>
+                    <Typography variant="subtitle2">Dossier d'importation</Typography>
+                    <Typography variant="body1">
+                      {((selectedDepense?.custom_fields as { dossierImportation?: unknown } | null | undefined)
+                        ?.dossierImportation as string | undefined) ??
+                        selectedDepense?.dossier_importation}
+                    </Typography>
+                  </Box>
+                )}
 
               {(((selectedDepense?.custom_fields as { fournisseur?: unknown } | null | undefined)
                 ?.fournisseur as string | undefined) ||
                 selectedDepense?.fournisseur) && (
-                <Box>
-                  <Typography variant="subtitle2">Fournisseur</Typography>
-                  <Typography variant="body1">
-                    {((selectedDepense?.custom_fields as { fournisseur?: unknown } | null | undefined)
-                      ?.fournisseur as string | undefined) ??
-                      selectedDepense?.fournisseur}
-                  </Typography>
-                </Box>
-              )}
+                  <Box>
+                    <Typography variant="subtitle2">Fournisseur</Typography>
+                    <Typography variant="body1">
+                      {((selectedDepense?.custom_fields as { fournisseur?: unknown } | null | undefined)
+                        ?.fournisseur as string | undefined) ??
+                        selectedDepense?.fournisseur}
+                    </Typography>
+                  </Box>
+                )}
 
               <Box>
                 <Typography variant="subtitle2">Montant TVA</Typography>
@@ -2194,6 +2265,76 @@ export default function CollaborateurDepensesPage() {
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setSelectedDepense(null)}>Fermer</Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog
+          open={pjPreviewOpen}
+          onClose={() => {
+            setPjPreviewOpen(false);
+            setPjSignedUrl(null);
+            setPjContentType(null);
+          }}
+          fullWidth
+          maxWidth="md"
+          scroll="paper"
+          PaperProps={{ sx: { mt: 10, maxHeight: 'calc(100vh - 96px)' } }}
+        >
+          <DialogTitle>Pièce justificative</DialogTitle>
+          <DialogContent dividers>
+            {pjSignedUrl ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {isImagePreview ? (
+                  <Box
+                    component="img"
+                    src={pjSignedUrl}
+                    alt="Pièce justificative"
+                    sx={{ maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain' }}
+                  />
+                ) : isPdfPreview ? (
+                  <Box
+                    component="iframe"
+                    src={pjSignedUrl}
+                    sx={{ width: '100%', height: '70vh', border: 0 }}
+                    title="Pièce"
+                  />
+                ) : (
+                  <Typography>
+                    Aperçu indisponible pour ce type de fichier. Utilisez Ouvrir.
+                  </Typography>
+                )}
+              </Box>
+            ) : (
+              <Typography>Loading...</Typography>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button
+              variant="outlined"
+              color="primary"
+              size="medium"
+              sx={{ textTransform: 'none', fontWeight: 500, px: 2, py: 1 }}
+              disabled={!pjSignedUrl}
+              onClick={() => {
+                if (!pjSignedUrl) return;
+                window.open(pjSignedUrl, '_blank', 'noopener,noreferrer');
+              }}
+            >
+              Ouvrir
+            </Button>
+            <Button
+              variant="outlined"
+              color="primary"
+              size="medium"
+              sx={{ textTransform: 'none', fontWeight: 500, px: 2, py: 1 }}
+              onClick={() => {
+                setPjPreviewOpen(false);
+                setPjSignedUrl(null);
+                setPjContentType(null);
+              }}
+            >
+              Fermer
+            </Button>
           </DialogActions>
         </Dialog>
       </Container>
