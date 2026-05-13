@@ -893,7 +893,7 @@ export default function ResponsableDepensesPage() {
               <MenuItem value="rejetee">Rejetée</MenuItem>
             </TextField>
 
-            <Button variant="outlined" onClick={refresh}>
+            <Button variant="outlined" onClick={() => refresh()}>
               Actualiser
             </Button>
 
