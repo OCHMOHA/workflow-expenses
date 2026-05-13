@@ -205,19 +205,29 @@ export default function ResponsableDepensesPage() {
     return t === 'application/pdf';
   }, [pjContentType]);
 
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (userId?: string) => {
+    const effectiveUserId = userId ?? currentUserId;
     setFetchError(null);
     try {
-      const cached = cacheGet<DepenseRow[]>('depenses:responsable', CACHE_TTL_MS);
+      if (!effectiveUserId) {
+        setDepenses([]);
+        return;
+      }
+
+      const cacheKey = `depenses:responsable:${effectiveUserId}`;
+      const cached = cacheGet<DepenseRow[]>(cacheKey, CACHE_TTL_MS);
       if (cached && Array.isArray(cached) && cached.length > 0) {
         setDepenses(cached);
       }
 
+      const selectCols =
+        'id, date_depense, categorie, montant_ttc, montant_ht, tva, montant_tva, statut, saisisseur_id, ligne, sous_ligne, libelle, piece_justificative_url, motif_rejet, fournisseur, nom_beneficiaire, mois, nom_vehicule, nom_commercial, provenance, nom_produit, quantite_kg, dossier_importation, valideur_id, mode_reglement, nom_beneficiaire_reglement, piece_reglement_url, reglee_at, reglee_par';
+
+      // Fetch only expenses assigned to this validator
       const { data, error } = await supabase
         .from('depenses')
-        .select(
-          'id, date_depense, categorie, montant_ttc, montant_ht, tva, montant_tva, statut, saisisseur_id, ligne, sous_ligne, libelle, piece_justificative_url, motif_rejet, fournisseur, nom_beneficiaire, mois, nom_vehicule, nom_commercial, provenance, nom_produit, quantite_kg, dossier_importation, valideur_id, mode_reglement, nom_beneficiaire_reglement, piece_reglement_url, reglee_at, reglee_par'
-        )
+        .select(selectCols)
+        .eq('valideur_id', effectiveUserId)
         .order('date_depense', { ascending: false });
 
       if (error) {
@@ -254,25 +264,18 @@ export default function ResponsableDepensesPage() {
         ])
       );
 
-      setDepenses(
-        rows.map((r) => ({
-          ...r,
-          saisisseur_nom: r.saisisseur_id ? nameById.get(r.saisisseur_id) ?? null : null,
-        }))
-      );
+      const enriched = rows.map((r) => ({
+        ...r,
+        saisisseur_nom: r.saisisseur_id ? nameById.get(r.saisisseur_id) ?? null : null,
+      }));
 
-      cacheSet(
-        'depenses:responsable',
-        rows.map((r) => ({
-          ...r,
-          saisisseur_nom: r.saisisseur_id ? nameById.get(r.saisisseur_id) ?? null : null,
-        }))
-      );
+      setDepenses(enriched);
+      cacheSet(cacheKey, enriched);
     } catch (e: unknown) {
       setFetchError(e instanceof Error ? e.message : String(e));
       setDepenses([]);
     }
-  }, []);
+  }, [currentUserId]);
 
   React.useEffect(() => {
     supabase.auth
@@ -307,7 +310,7 @@ export default function ResponsableDepensesPage() {
           }
         })();
 
-        refresh();
+        refresh(userId);
       })
       .catch(() => {
         router.replace('/login?redirect=/responsable/depenses');

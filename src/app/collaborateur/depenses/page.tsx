@@ -984,6 +984,30 @@ export default function CollaborateurDepensesPage() {
 
       setSubmitError(null);
 
+      // Always fetch the freshest sous_ligne options at submit time so any
+      // valideur assignment changes made in the admin panel are reflected
+      // immediately, regardless of when this page was loaded.
+      let freshValideurMap: Record<string, string> = { ...sousLigneValideurMap };
+      try {
+        const { data: freshField } = await supabase
+          .from('expense_form_fields_v2')
+          .select('options')
+          .eq('system_key', 'sous_ligne')
+          .maybeSingle();
+        if (freshField?.options && typeof freshField.options === 'object' && !Array.isArray(freshField.options)) {
+          const raw = (freshField.options as Record<string, unknown>)._valideur_map;
+          if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+            const map: Record<string, string> = {};
+            for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+              if (typeof v === 'string' && v.trim()) map[k] = v;
+            }
+            freshValideurMap = map;
+          }
+        }
+      } catch {
+        // Fallback to in-memory map if the fresh fetch fails
+      }
+
       const payload = {
         date_depense: dateStr,
         categorie: data.categorie,
@@ -1011,7 +1035,7 @@ export default function CollaborateurDepensesPage() {
         sous_ligne: data.sousLigne,
         libelle: data.libelle,
         piece_justificative_url: pieceJustificativePath,
-        valideur_id: (data.sousLigne && sousLigneValideurMap[data.sousLigne]) ? sousLigneValideurMap[data.sousLigne] : null,
+        valideur_id: (data.sousLigne && freshValideurMap[data.sousLigne]) ? freshValideurMap[data.sousLigne] : null,
         custom_fields: {
           ...v2CustomPayload,
         },

@@ -334,7 +334,7 @@ export default function ResponsableN2DepensesPage() {
 
       setReglementError(
         (error?.message ?? "Impossible d'ouvrir la pièce de règlement.") +
-          ` (bucket=pieces-reglement, path=${storagePath})`
+        ` (bucket=pieces-reglement, path=${storagePath})`
       );
       return;
     }

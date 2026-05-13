@@ -1262,11 +1262,11 @@ export default function AdministrationPage() {
                   <MenuItem value="">Sélectionner</MenuItem>
                   {taxonomyEditorKey === 'ligne'
                     ? (ligneIsFlatArray
-                        ? ligneFlatArray
-                        : taxonomyLigneCategorieParent
-                          ? (ligneMapV2[taxonomyLigneCategorieParent] ?? [])
-                          : ligneOptionsV2
-                      ).map((o) => (
+                      ? ligneFlatArray
+                      : taxonomyLigneCategorieParent
+                        ? (ligneMapV2[taxonomyLigneCategorieParent] ?? [])
+                        : ligneOptionsV2
+                    ).map((o) => (
                       <MenuItem key={o} value={o}>
                         {prettyText(o)}
                       </MenuItem>
@@ -1432,7 +1432,28 @@ export default function AdministrationPage() {
                         delete currentMap[taxonomySelectedValue];
                       }
                       const nextOpts = { ...safeOpts, _valideur_map: currentMap };
-                      void saveSystemOptionsV2('sous_ligne', nextOpts);
+                      void (async () => {
+                        // 1. Save the configuration change
+                        await saveSystemOptionsV2('sous_ligne', nextOpts);
+
+                        // 2. Re-assign valideur_id on ALL pending depenses with this
+                        //    sous-ligne so the correct responsable sees them immediately.
+                        //    Covers every status that is still awaiting validation.
+                        const { error: bulkErr } = await supabase
+                          .from('depenses')
+                          .update({ valideur_id: valideurId || null })
+                          .eq('sous_ligne', taxonomySelectedValue)
+                          .in('statut', ['SOUMISE', 'BROUILLON', 'A_VALIDER_N2']);
+
+                        if (bulkErr) {
+                          setError(
+                            `Configuration sauvegardée, mais la réassignation des dépenses existantes a échoué : ${bulkErr.message}. ` +
+                            `Vérifiez les politiques RLS sur la table depenses (UPDATE).`
+                          );
+                        } else {
+                          setSuccess('Valideur mis à jour et dépenses existantes réassignées.');
+                        }
+                      })();
                     }}
                   >
                     <MenuItem value="">Aucun (non assigné)</MenuItem>
